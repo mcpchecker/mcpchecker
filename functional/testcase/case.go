@@ -3,6 +3,7 @@
 package testcase
 
 import (
+	"os"
 	"testing"
 )
 
@@ -22,6 +23,9 @@ type TestCase struct {
 
 	// Assertions to run after the test
 	assertions []Assertion
+
+	// Execution mode
+	inProcess bool // If true, run mcpchecker in-process instead of subprocess
 }
 
 // New creates a new test case with the given name
@@ -196,4 +200,22 @@ func (tc *TestCase) Run() {
 // Name returns the test case name
 func (tc *TestCase) Name() string {
 	return tc.name
+}
+
+// WithInProcess enables in-process execution mode for this test case.
+// In this mode, the mcpchecker CLI is executed in-process instead of spawning
+// a subprocess, enabling code coverage collection and IDE debugging.
+func (tc *TestCase) WithInProcess() *TestCase {
+	tc.inProcess = true
+	return tc
+}
+
+// IsInProcess returns true if the test should run in in-process mode.
+// This is true if either WithInProcess() was called on the test case,
+// or if the MCPCHECKER_TEST_INPROCESS environment variable is set to "true".
+func (tc *TestCase) IsInProcess() bool {
+	if tc.inProcess {
+		return true
+	}
+	return os.Getenv(EnvInProcessMode) == "true"
 }
