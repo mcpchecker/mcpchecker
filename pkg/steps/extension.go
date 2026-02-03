@@ -4,9 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/mcpchecker/mcpchecker/pkg/extension/client"
 	extprotocol "github.com/mcpchecker/mcpchecker/pkg/extension/protocol"
+)
+
+const (
+	// extensionTimeout is the timeout for extension operation calls
+	extensionTimeout = 30 * time.Second
 )
 
 type extensionStep struct {
@@ -61,6 +67,10 @@ func NewExtensionParser(ctx context.Context, alias string) PrefixParser {
 var _ StepRunner = &extensionStep{}
 
 func (r *extensionStep) Execute(ctx context.Context, input *StepInput) (*StepOutput, error) {
+	// Apply timeout to prevent extension calls from hanging indefinitely
+	ctx, cancel := context.WithTimeout(ctx, extensionTimeout)
+	defer cancel()
+
 	manager, ok := client.ManagerFromContext(ctx)
 	if !ok {
 		return nil, fmt.Errorf("failed to get extension manager from context")
