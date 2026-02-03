@@ -22,9 +22,10 @@ type StepRunner interface {
 }
 
 type StepInput struct {
-	Env     map[string]string
-	Workdir string
-	Agent   *AgentContext
+	Env         map[string]string
+	Workdir     string
+	Agent       *AgentContext
+	StepOutputs map[string]map[string]string // Maps step type to its outputs
 }
 
 type StepOutput struct {

@@ -140,9 +140,12 @@ func (r *taskRunner) Setup(ctx context.Context) (*PhaseOutput, error) {
 		Success: true,
 	}
 
+	stepOutputs := make(map[string]map[string]string)
+
 	for i, s := range r.setup {
 		res, err := s.Execute(ctx, &steps.StepInput{
-			Workdir: r.baseDir,
+			Workdir:     r.baseDir,
+			StepOutputs: stepOutputs,
 		})
 
 		out.Steps = append(out.Steps, res)
@@ -153,6 +156,11 @@ func (r *taskRunner) Setup(ctx context.Context) (*PhaseOutput, error) {
 		}
 		if res != nil && !res.Success {
 			out.Success = false
+		}
+
+		// Accumulate outputs from this step
+		if res != nil && res.Success && len(res.Outputs) > 0 && res.Type != "" {
+			stepOutputs[res.Type] = res.Outputs
 		}
 	}
 
@@ -165,9 +173,12 @@ func (r *taskRunner) Cleanup(ctx context.Context) (*PhaseOutput, error) {
 		Success: true,
 	}
 
+	stepOutputs := make(map[string]map[string]string)
+
 	for i, s := range r.cleanup {
 		res, err := s.Execute(ctx, &steps.StepInput{
-			Workdir: r.baseDir,
+			Workdir:     r.baseDir,
+			StepOutputs: stepOutputs,
 		})
 
 		out.Steps = append(out.Steps, res)
@@ -178,6 +189,11 @@ func (r *taskRunner) Cleanup(ctx context.Context) (*PhaseOutput, error) {
 		}
 		if res != nil && !res.Success {
 			out.Success = false
+		}
+
+		// Accumulate outputs from this step
+		if res != nil && res.Success && len(res.Outputs) > 0 && res.Type != "" {
+			stepOutputs[res.Type] = res.Outputs
 		}
 	}
 
@@ -225,13 +241,16 @@ func (r *taskRunner) Verify(ctx context.Context) (*PhaseOutput, error) {
 		Success: true,
 	}
 
+	stepOutputs := make(map[string]map[string]string)
+
 	for i, s := range r.verify {
 		res, err := s.Execute(ctx, &steps.StepInput{
 			Agent: &steps.AgentContext{
 				Prompt: r.prompt,
 				Output: r.output,
 			},
-			Workdir: r.baseDir,
+			Workdir:     r.baseDir,
+			StepOutputs: stepOutputs,
 		})
 
 		out.Steps = append(out.Steps, res)
@@ -242,6 +261,11 @@ func (r *taskRunner) Verify(ctx context.Context) (*PhaseOutput, error) {
 		}
 		if res != nil && !res.Success {
 			out.Success = false
+		}
+
+		// Accumulate outputs from this step
+		if res != nil && res.Success && len(res.Outputs) > 0 && res.Type != "" {
+			stepOutputs[res.Type] = res.Outputs
 		}
 	}
 
