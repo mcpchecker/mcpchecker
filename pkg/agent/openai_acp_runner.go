@@ -6,11 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
+	"strings"
 
 	"github.com/coder/acp-go-sdk"
 	"github.com/mcpchecker/mcpchecker/pkg/acpclient"
 	"github.com/mcpchecker/mcpchecker/pkg/mcpproxy"
 	"github.com/mcpchecker/mcpchecker/pkg/openaiagent"
+	"github.com/mcpchecker/mcpchecker/pkg/tokenizer"
 )
 
 type openAIACPRunner struct {
@@ -85,12 +88,15 @@ func (r *openAIACPRunner) RunTask(ctx context.Context, prompt string) (AgentResu
 		return nil, fmt.Errorf("failed to run ACP agent: %w", err)
 	}
 
-	return &openAIACPResult{updates: updates}, nil
+	return &openAIACPResult{updates: updates, prompt: prompt}, nil
 }
 
 type openAIACPResult struct {
 	updates []acp.SessionUpdate
+	prompt  string
 }
+
+var _ AgentResult = &openAIACPResult{}
 
 func (res *openAIACPResult) GetOutput() string {
 	if len(res.updates) == 0 {
@@ -108,6 +114,127 @@ func (res *openAIACPResult) GetOutput() string {
 	}
 
 	return string(out)
+}
+
+func (res *openAIACPResult) GetFinalMessage() string {
+	var message strings.Builder
+	for _, update := range res.updates {
+		if update.AgentMessageChunk != nil && update.AgentMessageChunk.Content.Text != nil {
+			message.WriteString(update.AgentMessageChunk.Content.Text.Text)
+		}
+	}
+	return message.String()
+}
+
+func (res *openAIACPResult) GetToolCalls() []ToolCallSummary {
+	var toolCalls []ToolCallSummary
+	seen := make(map[acp.ToolCallId]bool)
+
+	for _, update := range res.updates {
+		if update.ToolCall != nil {
+			if seen[update.ToolCall.ToolCallId] {
+				continue
+			}
+			seen[update.ToolCall.ToolCallId] = true
+
+			tc := ToolCallSummary{
+				Title:     update.ToolCall.Title,
+				Kind:      string(update.ToolCall.Kind),
+				Status:    string(update.ToolCall.Status),
+				RawInput:  update.ToolCall.RawInput,
+				RawOutput: update.ToolCall.RawOutput,
+			}
+			toolCalls = append(toolCalls, tc)
+		}
+	}
+	return toolCalls
+}
+
+func (res *openAIACPResult) GetThinking() string {
+	var thinking strings.Builder
+	for _, update := range res.updates {
+		if update.AgentThoughtChunk != nil && update.AgentThoughtChunk.Content.Text != nil {
+			thinking.WriteString(update.AgentThoughtChunk.Content.Text.Text)
+		}
+	}
+	return thinking.String()
+}
+
+func (res *openAIACPResult) GetRawUpdates() any {
+	return res.updates
+}
+
+func (res *openAIACPResult) GetTokenEstimate() TokenEstimate {
+	tok := tokenizer.Get()
+	var errors []string
+
+	// Count prompt tokens (INPUT)
+	promptTokens, err := tok.CountTokens(res.prompt)
+	if err != nil {
+		log.Printf("Warning: failed to count prompt tokens: %v", err)
+		errors = append(errors, "prompt")
+	}
+
+	// Count agent's final message tokens (OUTPUT)
+	messageTokens, err := tok.CountTokens(res.GetFinalMessage())
+	if err != nil {
+		log.Printf("Warning: failed to count message tokens: %v", err)
+		errors = append(errors, "message")
+		messageTokens = 0
+	}
+
+	// Count thinking tokens (OUTPUT)
+	thinkingTokens, err := tok.CountTokens(res.GetThinking())
+	if err != nil {
+		log.Printf("Warning: failed to count thinking tokens: %v", err)
+		errors = append(errors, "thinking")
+		thinkingTokens = 0
+	}
+
+	var toolCallTokens, toolResultTokens int64
+	for _, tc := range res.GetToolCalls() {
+		// Tool call parameters: agent -> tools (OUTPUT - agent generates these)
+		if inputJSON, err := json.Marshal(tc.RawInput); err == nil {
+			if count, err := tok.CountTokens(string(inputJSON)); err != nil {
+				log.Printf("Warning: failed to count tool call tokens: %v", err)
+				errors = append(errors, "tool_calls")
+			} else {
+				toolCallTokens += int64(count)
+			}
+		}
+		// Tool results: tools -> agent (INPUT - these go back into agent context)
+		if outputJSON, err := json.Marshal(tc.RawOutput); err == nil {
+			if count, err := tok.CountTokens(string(outputJSON)); err != nil {
+				log.Printf("Warning: failed to count tool result tokens: %v", err)
+				errors = append(errors, "tool_results")
+			} else {
+				toolResultTokens += int64(count)
+			}
+		}
+	}
+
+	// Input = prompt + tool results (what goes INTO the model)
+	inputTokens := int64(promptTokens) + toolResultTokens
+
+	// Output = message + thinking + tool calls (what model GENERATES)
+	outputTokens := int64(messageTokens) + int64(thinkingTokens) + toolCallTokens
+
+	var errorStr string
+	if len(errors) > 0 {
+		errorStr = fmt.Sprintf("failed to count: %s", strings.Join(errors, ", "))
+	}
+
+	return TokenEstimate{
+		InputTokens:      inputTokens,
+		OutputTokens:     outputTokens,
+		PromptTokens:     int64(promptTokens),
+		MessageTokens:    int64(messageTokens),
+		ThinkingTokens:   int64(thinkingTokens),
+		ToolCallTokens:   toolCallTokens,
+		ToolResultTokens: toolResultTokens,
+		TotalTokens:      inputTokens + outputTokens,
+		Error:            errorStr,
+	}
 }
 
 // openAIACPTransport implements acpclient.Transport using in-memory pipes

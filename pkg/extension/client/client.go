@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os/exec"
 	"sync"
+	"time"
 
 	"github.com/mcpchecker/mcpchecker/pkg/extension/protocol"
 	"golang.org/x/exp/jsonrpc2"
@@ -98,7 +99,11 @@ func (c *client) Execute(ctx context.Context, params *protocol.ExecuteParams) (*
 }
 
 func (c *client) Shutdown(ctx context.Context) error {
-	if err := c.call(ctx, protocol.MethodShutdown, struct{}{}, nil); err != nil {
+	// Use a timeout for the shutdown RPC call to avoid hanging if the extension is unresponsive
+	shutdownCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	if err := c.call(shutdownCtx, protocol.MethodShutdown, struct{}{}, nil); err != nil {
 		c.closeConn()
 		err = errors.Join(err, c.cmd.Process.Kill())
 		return err
