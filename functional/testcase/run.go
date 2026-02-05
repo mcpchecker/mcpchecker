@@ -256,6 +256,71 @@ func (r *Runner) generateAgentSpecFile() (string, error) {
 }
 
 func (r *Runner) runMcpChecker(ctx context.Context) *RunContext {
+	if r.tc.IsInProcess() {
+		return r.runMcpCheckerInProcess()
+	}
+	return r.runMcpCheckerSubprocess(ctx)
+}
+
+func (r *Runner) runMcpCheckerInProcess() *RunContext {
+	runCtx := &RunContext{
+		MCPServers:  r.mcpServers,
+		JudgeServer: r.judgeServer,
+	}
+
+	// Build environment variables
+	env := make(map[string]string)
+	if r.agentConfig != "" {
+		env[agent.EnvConfigPath] = r.agentConfig
+	}
+	// Set OpenAI API key to dummy value (we're using mock)
+	env["OPENAI_API_KEY"] = "sk-mock-key"
+
+	// Set mock OpenAI server environment variables if judge is configured
+	if r.judgeServer != nil {
+		env["E2E_OPENAI_BASE_URL"] = r.judgeServer.URL()
+		env["E2E_OPENAI_API_KEY"] = "sk-mock-key"
+		env["E2E_OPENAI_MODEL"] = "gpt-4"
+	}
+
+	// Build command line arguments
+	args := []string{"check", r.evalFile}
+
+	// Execute in-process
+	executor := &InProcessExecutor{
+		Args: args,
+		Dir:  r.generator.TempDir(),
+		Env:  env,
+	}
+	result := executor.Execute()
+
+	runCtx.CommandOutput = result.Stdout + result.Stderr
+	runCtx.CommandError = result.Err
+	runCtx.ExitCode = result.ExitCode
+
+	// Log command output for debugging
+	if result.Err != nil {
+		r.t.Logf("mcpchecker command failed (in-process): %v", result.Err)
+		r.t.Logf("command output:\n%s", runCtx.CommandOutput)
+	}
+
+	// Parse eval results from output file
+	if _, statErr := os.Stat(r.outputFile); statErr == nil {
+		results, parseErr := ReadEvalResults(r.outputFile)
+		if parseErr != nil {
+			r.t.Logf("warning: failed to parse eval results: %v", parseErr)
+		} else {
+			runCtx.EvalResults = results
+		}
+	} else {
+		r.t.Logf("output file not found: %s", r.outputFile)
+		r.t.Logf("command output:\n%s", runCtx.CommandOutput)
+	}
+
+	return runCtx
+}
+
+func (r *Runner) runMcpCheckerSubprocess(ctx context.Context) *RunContext {
 	runCtx := &RunContext{
 		MCPServers:  r.mcpServers,
 		JudgeServer: r.judgeServer,
