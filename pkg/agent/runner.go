@@ -3,13 +3,25 @@ package agent
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"strings"
 	"text/template"
 
+	"github.com/coder/acp-go-sdk"
 	"github.com/mcpchecker/mcpchecker/pkg/mcpproxy"
+	"github.com/mcpchecker/mcpchecker/pkg/tokenizer"
+)
+
+// TokenSource indicates where token counts came from.
+type TokenSource string
+
+const (
+	TokenSourceEstimated TokenSource = "estimated"
+	TokenSourceActual    TokenSource = "actual"
 )
 
 type Runner interface {
@@ -23,8 +35,225 @@ type McpServerInfo interface {
 	GetMcpServers() []mcpproxy.Server
 }
 
+// ToolCallSummary provides structured access to tool call data.
+type ToolCallSummary struct {
+	Title     string `json:"title"`
+	Kind      string `json:"kind,omitempty"`
+	Status    string `json:"status,omitempty"`
+	RawInput  any    `json:"rawInput,omitempty"`
+	RawOutput any    `json:"rawOutput,omitempty"`
+}
+
+// ActualUsage contains real token counts from the agent (when reported).
+type ActualUsage struct {
+	InputTokens       int64  `json:"inputTokens"`
+	OutputTokens      int64  `json:"outputTokens"`
+	TotalTokens       int64  `json:"totalTokens"`
+	ThoughtTokens     *int64 `json:"thoughtTokens,omitempty"`
+	CachedReadTokens  *int64 `json:"cachedReadTokens,omitempty"`
+	CachedWriteTokens *int64 `json:"cachedWriteTokens,omitempty"`
+}
+
+// TokenEstimate provides token count estimates for different components.
+// Uses tiktoken library with cl100k_base encoding (may differ 10-30% for non-OpenAI models).
+type TokenEstimate struct {
+	// InputTokens: initial prompt + tool results only (excludes system prompt,
+	// multi-turn context, and cache)
+	InputTokens int64 `json:"inputTokens"`
+	// OutputTokens: agent's final message + thinking + tool call params
+	OutputTokens int64 `json:"outputTokens"`
+	// PromptTokens: the initial prompt sent to the agent
+	PromptTokens int64 `json:"promptTokens"`
+	// MessageTokens: agent's final response message
+	MessageTokens int64 `json:"messageTokens"`
+	// ThinkingTokens: agent's reasoning/thinking content
+	ThinkingTokens int64 `json:"thinkingTokens"`
+	// ToolCallTokens: tool call parameters (agent -> tools)
+	ToolCallTokens int64 `json:"toolCallTokens"`
+	// ToolResultTokens: tool results (tools -> agent, counted as input)
+	ToolResultTokens int64 `json:"toolResultTokens"`
+	// TotalTokens is InputTokens + OutputTokens
+	TotalTokens int64 `json:"totalTokens"`
+	// Error indicates if tokenization failed (partial or complete failure)
+	Error string `json:"error,omitempty"`
+	// Source indicates where the counts came from: "actual" or "estimated"
+	Source TokenSource `json:"source,omitempty"`
+	// Actual contains real usage from agent when available (nil if only estimated)
+	Actual *ActualUsage `json:"actual,omitempty"`
+}
+
+// ExtractToolCalls extracts deduplicated tool call summaries from ACP session updates.
+// It merges data from both ToolCall (initial) and ToolCallUpdate (subsequent) messages.
+func ExtractToolCalls(updates []acp.SessionUpdate) []ToolCallSummary {
+	// Use a map to collect and merge tool call data by ID
+	toolCallMap := make(map[acp.ToolCallId]*ToolCallSummary)
+	var order []acp.ToolCallId // preserve insertion order
+
+	for _, update := range updates {
+		// Handle initial tool call notifications
+		if update.ToolCall != nil {
+			id := update.ToolCall.ToolCallId
+			if _, exists := toolCallMap[id]; !exists {
+				order = append(order, id)
+				toolCallMap[id] = &ToolCallSummary{
+					Title:     update.ToolCall.Title,
+					Kind:      string(update.ToolCall.Kind),
+					Status:    string(update.ToolCall.Status),
+					RawInput:  update.ToolCall.RawInput,
+					RawOutput: update.ToolCall.RawOutput,
+				}
+			}
+		}
+
+		// Handle tool call updates (may contain RawOutput that arrives later)
+		if update.ToolCallUpdate != nil {
+			id := update.ToolCallUpdate.ToolCallId
+			tc, exists := toolCallMap[id]
+			if !exists {
+				// ToolCallUpdate arrived before ToolCall (unusual but handle it)
+				order = append(order, id)
+				tc = &ToolCallSummary{}
+				toolCallMap[id] = tc
+			}
+
+			// Merge update fields (only if non-nil/non-empty)
+			if update.ToolCallUpdate.Title != nil {
+				tc.Title = *update.ToolCallUpdate.Title
+			}
+			if update.ToolCallUpdate.Kind != nil {
+				tc.Kind = string(*update.ToolCallUpdate.Kind)
+			}
+			if update.ToolCallUpdate.Status != nil {
+				tc.Status = string(*update.ToolCallUpdate.Status)
+			}
+			if update.ToolCallUpdate.RawInput != nil {
+				tc.RawInput = update.ToolCallUpdate.RawInput
+			}
+			if update.ToolCallUpdate.RawOutput != nil {
+				tc.RawOutput = update.ToolCallUpdate.RawOutput
+			}
+		}
+	}
+
+	// Convert map to slice preserving order
+	toolCalls := make([]ToolCallSummary, 0, len(order))
+	for _, id := range order {
+		toolCalls = append(toolCalls, *toolCallMap[id])
+	}
+	return toolCalls
+}
+
+// ExtractFinalMessage extracts the agent's final message from ACP session updates.
+func ExtractFinalMessage(updates []acp.SessionUpdate) string {
+	var message strings.Builder
+	for _, update := range updates {
+		if update.AgentMessageChunk != nil && update.AgentMessageChunk.Content.Text != nil {
+			message.WriteString(update.AgentMessageChunk.Content.Text.Text)
+		}
+	}
+	return message.String()
+}
+
+// ExtractThinking extracts the agent's thinking/reasoning from ACP session updates.
+func ExtractThinking(updates []acp.SessionUpdate) string {
+	var thinking strings.Builder
+	for _, update := range updates {
+		if update.AgentThoughtChunk != nil && update.AgentThoughtChunk.Content.Text != nil {
+			thinking.WriteString(update.AgentThoughtChunk.Content.Text.Text)
+		}
+	}
+	return thinking.String()
+}
+
+// ComputeTokenEstimate calculates token estimates for agent execution.
+func ComputeTokenEstimate(prompt, message, thinking string, toolCalls []ToolCallSummary) TokenEstimate {
+	tok := tokenizer.Get()
+	var errors []string
+
+	// Count prompt tokens (INPUT)
+	promptTokens, err := tok.CountTokens(prompt)
+	if err != nil {
+		log.Printf("Warning: failed to count prompt tokens: %v", err)
+		errors = append(errors, "prompt")
+		promptTokens = 0
+	}
+
+	// Count agent's final message tokens (OUTPUT)
+	messageTokens, err := tok.CountTokens(message)
+	if err != nil {
+		log.Printf("Warning: failed to count message tokens: %v", err)
+		errors = append(errors, "message")
+		messageTokens = 0
+	}
+
+	// Count thinking tokens (OUTPUT)
+	thinkingTokens, err := tok.CountTokens(thinking)
+	if err != nil {
+		log.Printf("Warning: failed to count thinking tokens: %v", err)
+		errors = append(errors, "thinking")
+		thinkingTokens = 0
+	}
+
+	var toolCallTokens, toolResultTokens int64
+	for i, tc := range toolCalls {
+		// Tool call parameters: agent -> tools (OUTPUT - agent generates these)
+		if inputJSON, err := json.Marshal(tc.RawInput); err != nil {
+			log.Printf("Warning: failed to marshal tool call input [%d] %q: %v", i, tc.Title, err)
+			errors = append(errors, "tool_calls")
+		} else {
+			if count, err := tok.CountTokens(string(inputJSON)); err != nil {
+				log.Printf("Warning: failed to count tool call tokens [%d] %q: %v", i, tc.Title, err)
+				errors = append(errors, "tool_calls")
+			} else {
+				toolCallTokens += int64(count)
+			}
+		}
+		// Tool results: tools -> agent (INPUT - these go back into agent context)
+		if outputJSON, err := json.Marshal(tc.RawOutput); err != nil {
+			log.Printf("Warning: failed to marshal tool result output [%d] %q: %v", i, tc.Title, err)
+			errors = append(errors, "tool_results")
+		} else {
+			if count, err := tok.CountTokens(string(outputJSON)); err != nil {
+				log.Printf("Warning: failed to count tool result tokens [%d] %q: %v", i, tc.Title, err)
+				errors = append(errors, "tool_results")
+			} else {
+				toolResultTokens += int64(count)
+			}
+		}
+	}
+
+	// Input = prompt + tool results (what goes INTO the model)
+	inputTokens := int64(promptTokens) + toolResultTokens
+
+	// Output = message + thinking + tool calls (what model GENERATES)
+	outputTokens := int64(messageTokens) + int64(thinkingTokens) + toolCallTokens
+
+	var errorStr string
+	if len(errors) > 0 {
+		errorStr = fmt.Sprintf("failed to count: %s", strings.Join(errors, ", "))
+	}
+
+	return TokenEstimate{
+		InputTokens:      inputTokens,
+		OutputTokens:     outputTokens,
+		PromptTokens:     int64(promptTokens),
+		MessageTokens:    int64(messageTokens),
+		ThinkingTokens:   int64(thinkingTokens),
+		ToolCallTokens:   toolCallTokens,
+		ToolResultTokens: toolResultTokens,
+		TotalTokens:      inputTokens + outputTokens,
+		Error:            errorStr,
+	}
+}
+
+// AgentResult provides access to the results of an agent execution.
 type AgentResult interface {
 	GetOutput() string
+	GetFinalMessage() string
+	GetToolCalls() []ToolCallSummary
+	GetThinking() string
+	GetRawUpdates() any
+	GetTokenEstimate() TokenEstimate
 }
 
 type agentSpecRunner struct {
@@ -38,6 +267,26 @@ type agentSpecRunnerResult struct {
 
 func (a *agentSpecRunnerResult) GetOutput() string {
 	return a.commandOutput
+}
+
+func (a *agentSpecRunnerResult) GetFinalMessage() string {
+	return a.commandOutput // Shell output is the final message
+}
+
+func (a *agentSpecRunnerResult) GetToolCalls() []ToolCallSummary {
+	return nil // Shell runner doesn't have structured tool call data
+}
+
+func (a *agentSpecRunnerResult) GetThinking() string {
+	return "" // Shell runner doesn't capture thinking
+}
+
+func (a *agentSpecRunnerResult) GetRawUpdates() any {
+	return nil // Shell runner doesn't have session updates
+}
+
+func (a *agentSpecRunnerResult) GetTokenEstimate() TokenEstimate {
+	return TokenEstimate{Error: "token estimation not supported for shell runner"}
 }
 
 func NewRunnerForSpec(spec *AgentSpec) (Runner, error) {

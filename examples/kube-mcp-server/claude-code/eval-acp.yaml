@@ -1,0 +1,26 @@
+kind: Eval
+metadata:
+  name: "kubernetes-basic-operations"
+config:
+  agent:
+    type: "file"
+    path: agent-acp.yaml
+  mcpConfigFile: ../mcp-config.yaml
+  extensions:
+    kubernetes:
+      package: https://github.com/mcpchecker/kubernetes-extension@v0.0.2
+      config:
+        kubeconfig: ~/.kube/config
+  llmJudge:
+    env:
+      baseUrlKey: JUDGE_BASE_URL
+      apiKeyKey: JUDGE_API_KEY
+      modelNameKey: JUDGE_MODEL_NAME
+  taskSets:
+    - glob: ../tasks/*/*.yaml
+      assertions:
+        toolsUsed:
+          - server: kubernetes
+            toolPattern: ".*"
+        minToolCalls: 1
+        maxToolCalls: 20

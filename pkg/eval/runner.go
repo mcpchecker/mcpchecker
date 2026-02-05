@@ -31,6 +31,10 @@ type EvalResult struct {
 	AllAssertionsPassed bool                      `json:"allAssertionsPassed"`
 	CallHistory         *mcpproxy.CallHistory     `json:"callHistory"`
 
+	// TokenEstimate contains token count estimates from agent execution.
+	// Uses tiktoken (cl100k_base encoding). Excludes system prompt and cache tokens.
+	TokenEstimate *agent.TokenEstimate `json:"tokenEstimate,omitempty"`
+
 	// Phase outputs from task execution
 	SetupOutput   *task.PhaseOutput `json:"setupOutput,omitempty"`
 	AgentOutput   *task.PhaseOutput `json:"agentOutput,omitempty"`
@@ -404,6 +408,11 @@ func (r *evalRunner) executeTaskSteps(
 		if out, ok := agentOutput.Steps[0].Outputs["output"]; ok {
 			result.TaskOutput = out
 		}
+	}
+
+	// Extract token estimate from agent details
+	if agentOutput != nil && agentOutput.AgentDetails != nil {
+		result.TokenEstimate = agentOutput.AgentDetails.TokenEstimate
 	}
 
 	r.progressCallback(ProgressEvent{

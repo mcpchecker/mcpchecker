@@ -12,6 +12,14 @@ import (
 	"github.com/mcpchecker/mcpchecker/pkg/steps"
 )
 
+// AgentDetails captures structured information from the agent execution.
+type AgentDetails struct {
+	TokenEstimate *agent.TokenEstimate  `json:"tokenEstimate,omitempty"`
+	ToolCalls     []agent.ToolCallSummary `json:"toolCalls,omitempty"`
+	FinalMessage  string                `json:"finalMessage,omitempty"`
+	Thinking      string                `json:"thinking,omitempty"`
+}
+
 // PhaseOutput represents the output from a task phase (setup, agent, verify, or cleanup).
 // It contains both the individual step outputs and the overall phase result.
 type PhaseOutput struct {
@@ -24,6 +32,10 @@ type PhaseOutput struct {
 
 	// Error contains the error message if the phase failed.
 	Error string
+
+	// AgentDetails contains structured information from agent execution.
+	// Only populated for the agent phase.
+	AgentDetails *AgentDetails `json:"agentDetails,omitempty"`
 }
 
 type TaskRunner interface {
@@ -238,8 +250,8 @@ func (r *taskRunner) Cleanup(ctx context.Context) (*PhaseOutput, error) {
 	return out, nil
 }
 
-func (r *taskRunner) RunAgent(ctx context.Context, agent agent.Runner) (*PhaseOutput, error) {
-	result, err := agent.RunTask(ctx, r.prompt)
+func (r *taskRunner) RunAgent(ctx context.Context, agentRunner agent.Runner) (*PhaseOutput, error) {
+	result, err := agentRunner.RunTask(ctx, r.prompt)
 	if err != nil {
 		detailErr := fmt.Errorf("failed to run agent: %w", err)
 		return &PhaseOutput{
@@ -257,11 +269,20 @@ func (r *taskRunner) RunAgent(ctx context.Context, agent agent.Runner) (*PhaseOu
 	}
 
 	output := result.GetOutput()
-
 	r.output = output
 
+	// Capture structured agent details
+	tokenEstimate := result.GetTokenEstimate()
+	agentDetails := &AgentDetails{
+		TokenEstimate: &tokenEstimate,
+		ToolCalls:     result.GetToolCalls(),
+		FinalMessage:  result.GetFinalMessage(),
+		Thinking:      result.GetThinking(),
+	}
+
 	return &PhaseOutput{
-		Success: true,
+		Success:      true,
+		AgentDetails: agentDetails,
 		Steps: []*steps.StepOutput{{
 			Type:    "agent",
 			Success: true,

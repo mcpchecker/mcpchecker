@@ -34,13 +34,15 @@ func (r *acpRunner) RunTask(ctx context.Context, prompt string) (AgentResult, er
 		return nil, fmt.Errorf("failed to start acp client: %w", err)
 	}
 
-	result, err := client.Run(ctx, prompt, r.mcpServers)
+	result, err := client.RunWithUsage(ctx, prompt, r.mcpServers)
 	if err != nil {
 		return nil, fmt.Errorf("failed to run acp agent: %w", err)
 	}
 
 	return &acpRunnerResult{
-		updates: result,
+		updates:     result.Updates,
+		prompt:      prompt,
+		actualUsage: result.Usage,
 	}, nil
 }
 
@@ -57,7 +59,9 @@ func (r *acpRunner) AgentName() string {
 }
 
 type acpRunnerResult struct {
-	updates []acp.SessionUpdate
+	updates     []acp.SessionUpdate
+	prompt      string            // Original prompt sent to agent
+	actualUsage *acpclient.Usage  // Actual usage from agent (nil if not reported)
 }
 
 var _ AgentResult = &acpRunnerResult{}
@@ -78,4 +82,50 @@ func (res *acpRunnerResult) GetOutput() string {
 	}
 
 	return string(out)
+}
+
+func (res *acpRunnerResult) GetFinalMessage() string {
+	return ExtractFinalMessage(res.updates)
+}
+
+func (res *acpRunnerResult) GetToolCalls() []ToolCallSummary {
+	return ExtractToolCalls(res.updates)
+}
+
+func (res *acpRunnerResult) GetThinking() string {
+	return ExtractThinking(res.updates)
+}
+
+func (res *acpRunnerResult) GetRawUpdates() any {
+	return res.updates
+}
+
+func (res *acpRunnerResult) GetTokenEstimate() TokenEstimate {
+	estimate := ComputeTokenEstimate(res.prompt, res.GetFinalMessage(), res.GetThinking(), res.GetToolCalls())
+	estimate.Source = TokenSourceEstimated
+
+	// Use actual usage from agent if available
+	if res.actualUsage != nil {
+		estimate.Source = TokenSourceActual
+		estimate.Actual = &ActualUsage{
+			InputTokens:  res.actualUsage.InputTokens,
+			OutputTokens: res.actualUsage.OutputTokens,
+			TotalTokens:  res.actualUsage.TotalTokens,
+		}
+		if res.actualUsage.ThoughtTokens != nil {
+			estimate.Actual.ThoughtTokens = res.actualUsage.ThoughtTokens
+		}
+		if res.actualUsage.CachedReadTokens != nil {
+			estimate.Actual.CachedReadTokens = res.actualUsage.CachedReadTokens
+		}
+		if res.actualUsage.CachedWriteTokens != nil {
+			estimate.Actual.CachedWriteTokens = res.actualUsage.CachedWriteTokens
+		}
+		// Override the main counts with actual values
+		estimate.InputTokens = res.actualUsage.InputTokens
+		estimate.OutputTokens = res.actualUsage.OutputTokens
+		estimate.TotalTokens = res.actualUsage.TotalTokens
+	}
+
+	return estimate
 }

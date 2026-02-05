@@ -14,11 +14,20 @@ import (
 	"github.com/mcpchecker/mcpchecker/pkg/mcpclient"
 )
 
+// RunResult contains the results of running a prompt, including session updates
+// and any usage data reported by the agent.
+type RunResult struct {
+	Updates []acp.SessionUpdate
+	Usage   *Usage // Actual token usage from agent (nil if not reported)
+}
+
 type Client interface {
 	// Start starts the agent process and initializes the ACP connection
 	Start(ctx context.Context) error
 	// Run starts a new ACP session and runs the prompt to completion. Must be called after Start
 	Run(ctx context.Context, prompt string, servers mcpproxy.ServerManager) ([]acp.SessionUpdate, error)
+	// RunWithUsage is like Run but also returns usage data if the agent reports it.
+	RunWithUsage(ctx context.Context, prompt string, servers mcpproxy.ServerManager) (*RunResult, error)
 	// Close closes the client
 	Close(ctx context.Context) error
 }
@@ -127,6 +136,22 @@ func (c *client) Run(ctx context.Context, prompt string, servers mcpproxy.Server
 	delete(c.sessions, session.SessionId)
 
 	return res, nil
+}
+
+func (c *client) RunWithUsage(ctx context.Context, prompt string, servers mcpproxy.ServerManager) (*RunResult, error) {
+	updates, err := c.Run(ctx, prompt, servers)
+	if err != nil {
+		return nil, err
+	}
+
+	result := &RunResult{
+		Updates: updates,
+	}
+
+	// Extract usage data from Meta fields (safe - SDK already parsed the JSON)
+	result.Usage = ExtractUsageFromMeta(updates)
+
+	return result, nil
 }
 
 func (c *client) Close(ctx context.Context) error {

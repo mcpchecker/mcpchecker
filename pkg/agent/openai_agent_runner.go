@@ -24,6 +24,26 @@ func (r *openAIAgentResult) GetOutput() string {
 	return r.output
 }
 
+func (r *openAIAgentResult) GetFinalMessage() string {
+	return r.output // OpenAI agent output is the final message
+}
+
+func (r *openAIAgentResult) GetToolCalls() []ToolCallSummary {
+	return nil // OpenAI agent doesn't expose structured tool calls yet
+}
+
+func (r *openAIAgentResult) GetThinking() string {
+	return "" // OpenAI agent doesn't expose thinking
+}
+
+func (r *openAIAgentResult) GetRawUpdates() any {
+	return nil // OpenAI agent doesn't have session updates
+}
+
+func (r *openAIAgentResult) GetTokenEstimate() TokenEstimate {
+	return TokenEstimate{Error: "token estimation not supported for openai-agent runner"}
+}
+
 // NewOpenAIAgentRunner creates a runner that uses the openaiagent package directly
 func NewOpenAIAgentRunner(model, baseURL, apiKey string) (Runner, error) {
 	if model == "" || baseURL == "" || apiKey == "" {

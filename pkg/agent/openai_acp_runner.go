@@ -80,17 +80,25 @@ func (r *openAIACPRunner) RunTask(ctx context.Context, prompt string) (AgentResu
 	// Only defer Close after successful Start - Start handles its own cleanup on failure
 	defer client.Close(ctx)
 
-	updates, err := client.Run(ctx, prompt, r.mcpServers)
+	result, err := client.RunWithUsage(ctx, prompt, r.mcpServers)
 	if err != nil {
 		return nil, fmt.Errorf("failed to run ACP agent: %w", err)
 	}
 
-	return &openAIACPResult{updates: updates}, nil
+	return &openAIACPResult{
+		updates:     result.Updates,
+		prompt:      prompt,
+		actualUsage: result.Usage,
+	}, nil
 }
 
 type openAIACPResult struct {
-	updates []acp.SessionUpdate
+	updates     []acp.SessionUpdate
+	prompt      string
+	actualUsage *acpclient.Usage
 }
+
+var _ AgentResult = &openAIACPResult{}
 
 func (res *openAIACPResult) GetOutput() string {
 	if len(res.updates) == 0 {
@@ -108,6 +116,52 @@ func (res *openAIACPResult) GetOutput() string {
 	}
 
 	return string(out)
+}
+
+func (res *openAIACPResult) GetFinalMessage() string {
+	return ExtractFinalMessage(res.updates)
+}
+
+func (res *openAIACPResult) GetToolCalls() []ToolCallSummary {
+	return ExtractToolCalls(res.updates)
+}
+
+func (res *openAIACPResult) GetThinking() string {
+	return ExtractThinking(res.updates)
+}
+
+func (res *openAIACPResult) GetRawUpdates() any {
+	return res.updates
+}
+
+func (res *openAIACPResult) GetTokenEstimate() TokenEstimate {
+	estimate := ComputeTokenEstimate(res.prompt, res.GetFinalMessage(), res.GetThinking(), res.GetToolCalls())
+	estimate.Source = TokenSourceEstimated
+
+	// Use actual usage from agent if available
+	if res.actualUsage != nil {
+		estimate.Source = TokenSourceActual
+		estimate.Actual = &ActualUsage{
+			InputTokens:  res.actualUsage.InputTokens,
+			OutputTokens: res.actualUsage.OutputTokens,
+			TotalTokens:  res.actualUsage.TotalTokens,
+		}
+		if res.actualUsage.ThoughtTokens != nil {
+			estimate.Actual.ThoughtTokens = res.actualUsage.ThoughtTokens
+		}
+		if res.actualUsage.CachedReadTokens != nil {
+			estimate.Actual.CachedReadTokens = res.actualUsage.CachedReadTokens
+		}
+		if res.actualUsage.CachedWriteTokens != nil {
+			estimate.Actual.CachedWriteTokens = res.actualUsage.CachedWriteTokens
+		}
+		// Override the main counts with actual values
+		estimate.InputTokens = res.actualUsage.InputTokens
+		estimate.OutputTokens = res.actualUsage.OutputTokens
+		estimate.TotalTokens = res.actualUsage.TotalTokens
+	}
+
+	return estimate
 }
 
 // openAIACPTransport implements acpclient.Transport using in-memory pipes

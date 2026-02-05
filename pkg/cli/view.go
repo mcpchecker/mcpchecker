@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/fatih/color"
+	"github.com/mcpchecker/mcpchecker/pkg/agent"
 	"github.com/mcpchecker/mcpchecker/pkg/eval"
 	"github.com/mcpchecker/mcpchecker/pkg/mcpproxy"
 	"github.com/mcpchecker/mcpchecker/pkg/results"
@@ -127,6 +128,7 @@ func printEvalResult(result *eval.EvalResult, opts viewOptions) {
 	}
 
 	printAssertions(result.AssertionResults, yellow)
+	printTokenEstimate(result.TokenEstimate)
 	printCallHistory(result.CallHistory, opts)
 
 	if opts.showTimeline {
@@ -138,6 +140,40 @@ func printEvalResult(result *eval.EvalResult, opts viewOptions) {
 			}
 		}
 	}
+}
+
+// printTokenEstimate prints agent token usage estimates.
+func printTokenEstimate(estimate *agent.TokenEstimate) {
+	if estimate == nil || estimate.TotalTokens == 0 {
+		return
+	}
+
+	fmt.Printf("  Tokens: ~%d (in=~%d, out=~%d)",
+		estimate.TotalTokens, estimate.InputTokens, estimate.OutputTokens)
+	if estimate.Error != "" {
+		fmt.Printf(" [incomplete - %s]", estimate.Error)
+	} else {
+		fmt.Printf(" [excludes system prompt & cache]")
+	}
+
+	// Show breakdown if we have detailed data
+	hasDetails := estimate.PromptTokens > 0 || estimate.MessageTokens > 0 ||
+		estimate.ThinkingTokens > 0 || estimate.ToolCallTokens > 0 || estimate.ToolResultTokens > 0
+
+	if hasDetails {
+		fmt.Printf("\n    input: prompt=~%d", estimate.PromptTokens)
+		if estimate.ToolResultTokens > 0 {
+			fmt.Printf(", tool_results=~%d", estimate.ToolResultTokens)
+		}
+		fmt.Printf("\n    output: message=~%d", estimate.MessageTokens)
+		if estimate.ThinkingTokens > 0 {
+			fmt.Printf(", thinking=~%d", estimate.ThinkingTokens)
+		}
+		if estimate.ToolCallTokens > 0 {
+			fmt.Printf(", tool_calls=~%d", estimate.ToolCallTokens)
+		}
+	}
+	fmt.Println()
 }
 
 // printAssertions prints assertion counts and any failing assertion reasons.

@@ -525,6 +525,36 @@ export MODEL_KEY="sk-..."
 - `claude-code` - Anthropic's Claude Code CLI
 - `openai-agent` - OpenAI-compatible agents using direct API calls (requires model)
 
+### ACP Mode
+
+ACP (Agent Control Protocol) mode provides structured access to agent data including tool calls, thinking, and token estimates. Any agent that implements the ACP protocol can be used.
+
+**1. Install an ACP adapter** (example: Claude Code):
+```bash
+npm install -g @zed-industries/claude-code-acp
+```
+
+**2. Create an agent-acp.yaml:**
+```yaml
+kind: Agent
+metadata:
+  name: "claude-code-acp"
+acp:
+  cmd: "claude-code-acp"
+```
+
+**3. Reference it in eval.yaml:**
+```yaml
+kind: Eval
+metadata:
+  name: "kubernetes-basic-operations"
+config:
+  agent:
+    type: "file"
+    path: agent-acp.yaml
+  # ...
+```
+
 ### Custom Agent Configuration
 
 For custom setups, specify the `commands` section:
