@@ -364,12 +364,15 @@ Instead of script-based verification, you can use an LLM judge to semantically e
 
 ### Configuration
 
-First, configure the LLM judge in your `eval.yaml`:
+MCPChecker supports both OpenAI and Claude (Anthropic) as LLM judges. Configure the judge in your `eval.yaml`:
+
+**OpenAI Configuration:**
 
 ```yaml
 config:
   llmJudge:
     env:
+      typeKey: JUDGE_TYPE           # Environment variable for judge type
       baseUrlKey: JUDGE_BASE_URL    # Environment variable for LLM API base URL
       apiKeyKey: JUDGE_API_KEY      # Environment variable for LLM API key
       modelNameKey: JUDGE_MODEL_NAME # Environment variable for model name
@@ -377,12 +380,37 @@ config:
 
 Set the required environment variables before running:
 ```bash
+export JUDGE_TYPE="openai"
 export JUDGE_BASE_URL="https://api.openai.com/v1"
 export JUDGE_API_KEY="sk-..."
 export JUDGE_MODEL_NAME="gpt-4o"
 ```
 
-**Note**: The LLM judge currently only supports OpenAI-compatible APIs (APIs that follow the OpenAI API format). The implementation uses the OpenAI Go SDK with a configurable base URL, so you can use any OpenAI-compatible endpoint, but APIs with different formats are not supported.
+**Claude Configuration:**
+
+The Claude judge uses the Claude Code CLI (`claude` binary). You must have the Claude Code CLI installed and available in your PATH.
+
+```yaml
+config:
+  llmJudge:
+    env:
+      typeKey: JUDGE_TYPE           # Environment variable for judge type
+      apiKeyKey: JUDGE_API_KEY      # Not used by Claude Code CLI (for compatibility)
+      modelNameKey: JUDGE_MODEL_NAME # Not used by Claude Code CLI (for compatibility)
+```
+
+Set the required environment variables before running:
+```bash
+export JUDGE_TYPE="claude"
+# JUDGE_API_KEY and JUDGE_MODEL_NAME are not used by Claude Code CLI
+# but must be set to satisfy configuration validation (can be any value)
+export JUDGE_API_KEY="unused"
+export JUDGE_MODEL_NAME="unused"
+```
+
+**Prerequisites**: Install Claude Code CLI from https://github.com/anthropics/claude-code
+
+**Note**: If `typeKey` is not specified or the environment variable is not set, the judge defaults to OpenAI for backward compatibility.
 
 ### Evaluation Modes
 

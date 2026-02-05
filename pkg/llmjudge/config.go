@@ -8,6 +8,9 @@ import (
 const (
 	EvaluationModeExact    = "EXACT"
 	EvaluationModeContains = "CONTAINS"
+
+	JudgeTypeOpenAI = "openai"
+	JudgeTypeClaude = "claude"
 )
 
 type LLMJudgeEvalConfig struct {
@@ -15,6 +18,7 @@ type LLMJudgeEvalConfig struct {
 }
 
 type LLMJudgeEnvConfig struct {
+	TypeKey      string `json:"typeKey,omitempty"`
 	BaseUrlKey   string `json:"baseUrlKey"`
 	ApiKeyKey    string `json:"apiKeyKey"`
 	ModelNameKey string `json:"modelNameKey"`
@@ -35,6 +39,17 @@ func (cfg *LLMJudgeEvalConfig) ApiKey() string {
 
 func (cfg *LLMJudgeEvalConfig) ModelName() string {
 	return os.Getenv(cfg.Env.ModelNameKey)
+}
+
+func (cfg *LLMJudgeEvalConfig) Type() string {
+	if cfg.Env.TypeKey == "" {
+		return JudgeTypeOpenAI // default to openai for backward compatibility
+	}
+	judgeType := os.Getenv(cfg.Env.TypeKey)
+	if judgeType == "" {
+		return JudgeTypeOpenAI // default to openai if env var not set
+	}
+	return judgeType
 }
 
 func (cfg *LLMJudgeStepConfig) EvaluationMode() string {

@@ -145,7 +145,7 @@ Scripts with a shebang (`#!/usr/bin/env python3`) are executed directly. Scripts
 
 ### llmJudge
 
-Uses an LLM to evaluate the agent's response. Only valid in the verify phase. Requires an LLM judge to be configured in the eval.yaml.
+Uses an LLM to evaluate the agent's response. Only valid in the verify phase. Requires an LLM judge to be configured in the eval.yaml. Supports both OpenAI and Claude (Anthropic) models.
 
 ```yaml
 - llmJudge:
@@ -165,6 +165,42 @@ One of `contains` or `exact` must be specified, but not both.
 - llmJudge:
     contains: "The pod is running in the default namespace"
 ```
+
+**Configuring the LLM Judge:**
+
+The judge is configured in your `eval.yaml` file. You can use either OpenAI or Claude as your judge.
+
+**OpenAI Judge Configuration:**
+
+```yaml
+llmJudge:
+  env:
+    typeKey: JUDGE_TYPE           # Set to "openai"
+    baseUrlKey: JUDGE_BASE_URL    # e.g., https://api.openai.com/v1
+    apiKeyKey: JUDGE_API_KEY      # Your OpenAI API key
+    modelNameKey: JUDGE_MODEL_NAME # e.g., gpt-4o
+```
+
+**Claude Judge Configuration:**
+
+The Claude judge uses the Claude Code CLI (`claude` binary). Install it from https://github.com/anthropics/claude-code
+
+```yaml
+llmJudge:
+  env:
+    typeKey: JUDGE_TYPE           # Set to "claude"
+    apiKeyKey: JUDGE_API_KEY      # Not used (for compatibility)
+    modelNameKey: JUDGE_MODEL_NAME # Not used (for compatibility)
+```
+
+Environment variables:
+```bash
+export JUDGE_TYPE="claude"
+export JUDGE_API_KEY="unused"  # Required for validation but not used
+export JUDGE_MODEL_NAME="unused"  # Required for validation but not used
+```
+
+**Note:** If `typeKey` is not specified or the environment variable is not set, the judge defaults to OpenAI for backward compatibility.
 
 ## Using Extensions
 

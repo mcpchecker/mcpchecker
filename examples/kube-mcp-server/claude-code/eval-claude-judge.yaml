@@ -1,0 +1,26 @@
+kind: Eval
+metadata:
+  name: "kubernetes-basic-operations-claude-judge"
+config:
+  agent:
+    type: "file"
+    path: agent.yaml
+  mcpConfigFile: ../mcp-config.yaml
+  extensions:
+    kubernetes:
+      package: https://github.com/mcpchecker/kubernetes-extension@v0.0.2
+      config:
+        kubeconfig: ~/.kube/config
+  llmJudge:
+    env:
+      typeKey: JUDGE_TYPE           # Set JUDGE_TYPE="claude" to use Claude Code CLI as judge
+      apiKeyKey: JUDGE_API_KEY      # Not used by Claude Code CLI (set to any value for validation)
+      modelNameKey: JUDGE_MODEL_NAME # Not used by Claude Code CLI (set to any value for validation)
+  taskSets:
+    - glob: ../tasks/*/*.yaml
+      assertions:
+        toolsUsed:
+          - server: kubernetes
+            toolPattern: ".*"
+        minToolCalls: 1
+        maxToolCalls: 20

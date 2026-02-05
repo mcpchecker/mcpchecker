@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/openai/openai-go/v2"
-	"github.com/openai/openai-go/v2/option"
+	openai_option "github.com/openai/openai-go/v2/option"
 )
 
 const (
@@ -43,6 +45,7 @@ var (
 			"required": []string{"passed", "reason", "failureCategory"},
 		},
 	}
+
 )
 
 type LLMJudge interface {
@@ -60,6 +63,10 @@ type llmJudge struct {
 	client  openai.Client
 	model   string
 	baseUrl string
+}
+
+type claudeJudge struct {
+	// Claude Code CLI doesn't need a client, it executes the 'claude' binary
 }
 
 type noopLLMJudge struct{}
@@ -83,14 +90,12 @@ func NewLLMJudge(cfg *LLMJudgeEvalConfig) (LLMJudge, error) {
 	if cfg.Env == nil {
 		return nil, fmt.Errorf("llm judge env config is required to create an llm judge")
 	}
-	baseUrl := cfg.BaseUrl()
+
+	judgeType := cfg.Type()
 	apiKey := cfg.ApiKey()
 	model := cfg.ModelName()
 
 	var missingVars []string
-	if baseUrl == "" {
-		missingVars = append(missingVars, fmt.Sprintf("%s (base URL)", cfg.Env.BaseUrlKey))
-	}
 	if apiKey == "" {
 		missingVars = append(missingVars, fmt.Sprintf("%s (API key)", cfg.Env.ApiKeyKey))
 	}
@@ -102,9 +107,25 @@ func NewLLMJudge(cfg *LLMJudgeEvalConfig) (LLMJudge, error) {
 		return nil, fmt.Errorf("missing required environment variables for LLM judge: %v", missingVars)
 	}
 
+	switch judgeType {
+	case JudgeTypeClaude:
+		return newClaudeJudge(cfg, apiKey, model)
+	case JudgeTypeOpenAI:
+		return newOpenAIJudge(cfg, apiKey, model)
+	default:
+		return nil, fmt.Errorf("unsupported judge type: %s (supported types: %s, %s)", judgeType, JudgeTypeOpenAI, JudgeTypeClaude)
+	}
+}
+
+func newOpenAIJudge(cfg *LLMJudgeEvalConfig, apiKey, model string) (LLMJudge, error) {
+	baseUrl := cfg.BaseUrl()
+	if baseUrl == "" {
+		return nil, fmt.Errorf("missing required environment variable: %s (base URL)", cfg.Env.BaseUrlKey)
+	}
+
 	client := openai.NewClient(
-		option.WithBaseURL(baseUrl),
-		option.WithAPIKey(apiKey),
+		openai_option.WithBaseURL(baseUrl),
+		openai_option.WithAPIKey(apiKey),
 	)
 
 	return &llmJudge{
@@ -112,6 +133,15 @@ func NewLLMJudge(cfg *LLMJudgeEvalConfig) (LLMJudge, error) {
 		model:   model,
 		baseUrl: baseUrl,
 	}, nil
+}
+
+func newClaudeJudge(cfg *LLMJudgeEvalConfig, apiKey, model string) (LLMJudge, error) {
+	// Verify that the 'claude' binary is available
+	if _, err := exec.LookPath("claude"); err != nil {
+		return nil, fmt.Errorf("'claude' binary not found in PATH. Please install Claude Code CLI: %w", err)
+	}
+
+	return &claudeJudge{}, nil
 }
 
 // supportsSeed returns true if the LLM provider supports the seed parameter for deterministic outputs
@@ -197,4 +227,68 @@ func (j *llmJudge) EvaluateText(ctx context.Context, judgeConfig *LLMJudgeStepCo
 
 func (j *llmJudge) ModelName() string {
 	return j.model
+}
+
+func (j *claudeJudge) EvaluateText(ctx context.Context, judgeConfig *LLMJudgeStepConfig, prompt, output string) (*LLMJudgeResult, error) {
+	systemPrompt, err := BuildSystemPrompt(SystemPromptData{
+		EvaluationMode:  judgeConfig.EvaluationMode(),
+		ReferenceAnswer: judgeConfig.ReferenceAnswer(),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	userPrompt, err := BuildUserPrompt(UserPromptData{
+		UserPrompt:    prompt,
+		ModelResponse: output,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Construct the full prompt for Claude Code CLI
+	fullPrompt := fmt.Sprintf(`%s
+
+%s
+
+Please respond with ONLY a JSON object in the following format (no other text):
+{
+  "passed": true or false,
+  "reason": "detailed explanation",
+  "failureCategory": "semantic_mismatch" or "missing_information" or "contains_extra_info" or "n/a"
+}`, systemPrompt, userPrompt)
+
+	// Execute Claude Code CLI
+	cmd := exec.CommandContext(ctx, "claude", "--print", fullPrompt)
+	cmd.Env = os.Environ()
+
+	outputBytes, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute claude CLI: %w\nOutput: %s", err, string(outputBytes))
+	}
+
+	// Parse the JSON response
+	responseText := strings.TrimSpace(string(outputBytes))
+
+	// Try to extract JSON from the response (in case there's extra text)
+	jsonStart := strings.Index(responseText, "{")
+	jsonEnd := strings.LastIndex(responseText, "}")
+
+	if jsonStart == -1 || jsonEnd == -1 || jsonEnd < jsonStart {
+		return nil, fmt.Errorf("no valid JSON found in Claude response: %s", responseText)
+	}
+
+	jsonText := responseText[jsonStart : jsonEnd+1]
+
+	result := &LLMJudgeResult{}
+	err = json.Unmarshal([]byte(jsonText), result)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshal Claude response as JSON: %w\nResponse: %s", err, jsonText)
+	}
+
+	return result, nil
+}
+
+func (j *claudeJudge) ModelName() string {
+	return "claude-code-cli"
 }
