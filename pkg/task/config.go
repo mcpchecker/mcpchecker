@@ -42,6 +42,7 @@ type TaskSpec struct {
 
 type Requirements struct {
 	Extension *string `json:"extension,omitempty"`
+	McpServer *string `json:"mcpServer,omitempty"`
 	As        *string `json:"as,omitempty"`
 }
 

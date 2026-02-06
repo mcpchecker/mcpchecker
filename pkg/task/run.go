@@ -8,6 +8,7 @@ import (
 
 	"github.com/mcpchecker/mcpchecker/pkg/agent"
 	"github.com/mcpchecker/mcpchecker/pkg/extension/client"
+	"github.com/mcpchecker/mcpchecker/pkg/mcpclient"
 	"github.com/mcpchecker/mcpchecker/pkg/steps"
 )
 
@@ -59,8 +60,17 @@ func NewTaskRunner(ctx context.Context, cfg *TaskConfig) (TaskRunner, error) {
 		return nil, fmt.Errorf("failed to get extension manager from context")
 	}
 
-	extensions := make(map[string]string, len(cfg.Spec.Requires))
-	for _, req := range cfg.Spec.Requires {
+	mcpClientManager, ok := mcpclient.ManagerFromContext(ctx)
+	if !ok {
+		return nil, fmt.Errorf("failed to get mcpclient manager from context")
+	}
+
+	extensions := make(map[string]string)
+	mcpServers := make(map[string]string)
+	for i, req := range cfg.Spec.Requires {
+		if req.McpServer != nil && req.Extension != nil {
+			return nil, fmt.Errorf("task.spec.requires[%d] is invalid: must have only one of mcpserver or extension defined, has both", i)
+		}
 		var alias string
 		if req.As != nil {
 			alias = *req.As
@@ -79,15 +89,43 @@ func NewTaskRunner(ctx context.Context, cfg *TaskConfig) (TaskRunner, error) {
 				return nil, fmt.Errorf("duplicate alias %q in requirements", alias)
 			}
 
+			if _, ok := mcpServers[alias]; ok {
+				return nil, fmt.Errorf("duplicate alias %q in requirements", alias)
+			}
+
 			if strings.Contains(alias, ".") {
 				return nil, fmt.Errorf("alias %q cannot contain dots", alias)
 			}
 
 			extensions[alias] = *req.Extension
 		}
+
+		if req.McpServer != nil {
+			if _, ok := mcpClientManager.Get(*req.McpServer); !ok {
+				return nil, fmt.Errorf("required mcpServer %q not registered", *req.McpServer)
+			}
+
+			if alias == "" {
+				alias = *req.McpServer
+			}
+
+			if _, ok := extensions[alias]; ok {
+				return nil, fmt.Errorf("duplicate alias %q in requirements", alias)
+			}
+
+			if _, ok := mcpServers[alias]; ok {
+				return nil, fmt.Errorf("duplicate alias %q in requirements", alias)
+			}
+
+			if strings.Contains(alias, ".") {
+				return nil, fmt.Errorf("alias %q cannot contain dots", alias)
+			}
+
+			mcpServers[alias] = *req.McpServer
+		}
 	}
 
-	parser := steps.DefaultRegistry.WithExtensions(ctx, extensions)
+	parser := steps.DefaultRegistry.WithExtensions(ctx, extensions).WithMcpServers(ctx, mcpServers)
 
 	for i, stepCfg := range cfg.Spec.Setup {
 		if stepCfg.ID == "" {

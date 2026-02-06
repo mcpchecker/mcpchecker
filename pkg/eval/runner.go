@@ -168,9 +168,11 @@ func (r *evalRunner) RunWithProgress(ctx context.Context, taskPattern string, ca
 	if err != nil {
 		return nil, fmt.Errorf("failed to create mcp manager: %w", err)
 	}
-	defer func () {
+	defer func() {
 		_ = mcpManager.Close(ctx)
 	}()
+
+	ctx = mcpclient.ManagerToContext(ctx, mcpManager)
 
 	agentSpec, err := r.loadAgentSpec()
 	if err != nil {

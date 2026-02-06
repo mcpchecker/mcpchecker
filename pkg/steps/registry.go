@@ -64,6 +64,23 @@ func (r *Registry) WithExtensions(ctx context.Context, aliases map[string]string
 	return reg
 }
 
+func (r *Registry) WithMcpServers(ctx context.Context, aliases map[string]string) *Registry {
+	r.mu.RLock()
+	reg := &Registry{
+		parsers:       make(map[string]Parser, len(r.parsers)),
+		prefixParsers: make(map[string]PrefixParser, len(r.prefixParsers)+len(aliases)),
+	}
+	maps.Copy(reg.parsers, r.parsers)
+	maps.Copy(reg.prefixParsers, r.prefixParsers)
+	r.mu.RUnlock()
+
+	for alias, mcpServer := range aliases {
+		reg.prefixParsers[alias] = NewMcpServerParser(ctx, mcpServer)
+	}
+
+	return reg
+}
+
 func (r *Registry) Parse(cfg *StepConfig) (StepRunner, error) {
 	if cfg == nil || len(cfg.Config) != 1 {
 		return nil, fmt.Errorf("each step must have exactly one type")
