@@ -34,7 +34,7 @@ jobs:
         run: make test
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@f713795cb21599bc4e5c4b58cbad1da852d7eeb9  # v3
+        uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad  # v3
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a  # v6
