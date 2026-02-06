@@ -13,9 +13,7 @@ config:
         kubeconfig: ~/.kube/config
   llmJudge:
     env:
-      typeKey: JUDGE_TYPE           # Set JUDGE_TYPE="claude" to use Claude Code CLI as judge
-      apiKeyKey: JUDGE_API_KEY      # Not used by Claude Code CLI (set to any value for validation)
-      modelNameKey: JUDGE_MODEL_NAME # Not used by Claude Code CLI (set to any value for validation)
+      typeKey: JUDGE_TYPE  # Set JUDGE_TYPE="claude" to use Claude Code CLI as judge
   taskSets:
     - glob: ../tasks/*/*.yaml
       assertions:

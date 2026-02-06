@@ -394,21 +394,17 @@ The Claude judge uses the Claude Code CLI (`claude` binary). You must have the C
 config:
   llmJudge:
     env:
-      typeKey: JUDGE_TYPE           # Environment variable for judge type
-      apiKeyKey: JUDGE_API_KEY      # Not used by Claude Code CLI (for compatibility)
-      modelNameKey: JUDGE_MODEL_NAME # Not used by Claude Code CLI (for compatibility)
+      typeKey: JUDGE_TYPE  # Environment variable for judge type
 ```
 
-Set the required environment variables before running:
+Set the required environment variable before running:
 ```bash
 export JUDGE_TYPE="claude"
-# JUDGE_API_KEY and JUDGE_MODEL_NAME are not used by Claude Code CLI
-# but must be set to satisfy configuration validation (can be any value)
-export JUDGE_API_KEY="unused"
-export JUDGE_MODEL_NAME="unused"
 ```
 
 **Prerequisites**: Install Claude Code CLI from https://github.com/anthropics/claude-code
+
+**Note**: The Claude judge does not require API keys or model names since it uses the local Claude CLI binary.
 
 **Note**: If `typeKey` is not specified or the environment variable is not set, the judge defaults to OpenAI for backward compatibility.
 

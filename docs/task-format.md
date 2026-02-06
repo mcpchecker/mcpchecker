@@ -188,17 +188,15 @@ The Claude judge uses the Claude Code CLI (`claude` binary). Install it from htt
 ```yaml
 llmJudge:
   env:
-    typeKey: JUDGE_TYPE           # Set to "claude"
-    apiKeyKey: JUDGE_API_KEY      # Not used (for compatibility)
-    modelNameKey: JUDGE_MODEL_NAME # Not used (for compatibility)
+    typeKey: JUDGE_TYPE  # Set to "claude"
 ```
 
 Environment variables:
 ```bash
 export JUDGE_TYPE="claude"
-export JUDGE_API_KEY="unused"  # Required for validation but not used
-export JUDGE_MODEL_NAME="unused"  # Required for validation but not used
 ```
+
+**Note**: API keys and model names are not required for Claude judge since it uses the local CLI binary.
 
 **Note:** If `typeKey` is not specified or the environment variable is not set, the judge defaults to OpenAI for backward compatibility.
 

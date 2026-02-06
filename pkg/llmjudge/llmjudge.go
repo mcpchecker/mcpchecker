@@ -92,10 +92,26 @@ func NewLLMJudge(cfg *LLMJudgeEvalConfig) (LLMJudge, error) {
 	}
 
 	judgeType := cfg.Type()
+
+	switch judgeType {
+	case JudgeTypeClaude:
+		return newClaudeJudge(cfg)
+	case JudgeTypeOpenAI:
+		return newOpenAIJudge(cfg)
+	default:
+		return nil, fmt.Errorf("unsupported judge type: %s (supported types: %s, %s)", judgeType, JudgeTypeOpenAI, JudgeTypeClaude)
+	}
+}
+
+func newOpenAIJudge(cfg *LLMJudgeEvalConfig) (LLMJudge, error) {
+	baseUrl := cfg.BaseUrl()
 	apiKey := cfg.ApiKey()
 	model := cfg.ModelName()
 
 	var missingVars []string
+	if baseUrl == "" {
+		missingVars = append(missingVars, fmt.Sprintf("%s (base URL)", cfg.Env.BaseUrlKey))
+	}
 	if apiKey == "" {
 		missingVars = append(missingVars, fmt.Sprintf("%s (API key)", cfg.Env.ApiKeyKey))
 	}
@@ -104,23 +120,7 @@ func NewLLMJudge(cfg *LLMJudgeEvalConfig) (LLMJudge, error) {
 	}
 
 	if len(missingVars) > 0 {
-		return nil, fmt.Errorf("missing required environment variables for LLM judge: %v", missingVars)
-	}
-
-	switch judgeType {
-	case JudgeTypeClaude:
-		return newClaudeJudge(cfg, apiKey, model)
-	case JudgeTypeOpenAI:
-		return newOpenAIJudge(cfg, apiKey, model)
-	default:
-		return nil, fmt.Errorf("unsupported judge type: %s (supported types: %s, %s)", judgeType, JudgeTypeOpenAI, JudgeTypeClaude)
-	}
-}
-
-func newOpenAIJudge(cfg *LLMJudgeEvalConfig, apiKey, model string) (LLMJudge, error) {
-	baseUrl := cfg.BaseUrl()
-	if baseUrl == "" {
-		return nil, fmt.Errorf("missing required environment variable: %s (base URL)", cfg.Env.BaseUrlKey)
+		return nil, fmt.Errorf("missing required environment variables for OpenAI judge: %v", missingVars)
 	}
 
 	client := openai.NewClient(
@@ -135,7 +135,7 @@ func newOpenAIJudge(cfg *LLMJudgeEvalConfig, apiKey, model string) (LLMJudge, er
 	}, nil
 }
 
-func newClaudeJudge(cfg *LLMJudgeEvalConfig, apiKey, model string) (LLMJudge, error) {
+func newClaudeJudge(_ *LLMJudgeEvalConfig) (LLMJudge, error) {
 	// Verify that the 'claude' binary is available
 	if _, err := exec.LookPath("claude"); err != nil {
 		return nil, fmt.Errorf("'claude' binary not found in PATH. Please install Claude Code CLI: %w", err)
