@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/openai/openai-go/v2"
 	"github.com/openai/openai-go/v2/option"
@@ -56,8 +57,9 @@ type LLMJudgeResult struct {
 }
 
 type llmJudge struct {
-	client openai.Client
-	model  string
+	client  openai.Client
+	model   string
+	baseUrl string
 }
 
 type noopLLMJudge struct{}
@@ -106,9 +108,20 @@ func NewLLMJudge(cfg *LLMJudgeEvalConfig) (LLMJudge, error) {
 	)
 
 	return &llmJudge{
-		client: client,
-		model:  model,
+		client:  client,
+		model:   model,
+		baseUrl: baseUrl,
 	}, nil
+}
+
+// supportsSeed returns true if the LLM provider supports the seed parameter for deterministic outputs
+func (j *llmJudge) supportsSeed() bool {
+	// Gemini's OpenAI-compatible endpoint doesn't support the seed parameter as of v1beta.
+	// Sending seed results in: "Invalid JSON payload received. Unknown name \"seed\": Cannot find field."
+	// Reference: https://discuss.ai.google.dev/t/openai-compatibility-not-fully-implemented/95991
+	// The OpenAI compatibility layer is still in beta with limited feature support.
+	// Check if the base URL contains "generativelanguage.googleapis.com" (Gemini)
+	return !strings.Contains(j.baseUrl, "generativelanguage.googleapis.com")
 }
 
 func (j *llmJudge) EvaluateText(ctx context.Context, judgeConfig *LLMJudgeStepConfig, prompt, output string) (*LLMJudgeResult, error) {
@@ -141,8 +154,14 @@ func (j *llmJudge) EvaluateText(ctx context.Context, judgeConfig *LLMJudgeStepCo
 			},
 		},
 		ToolChoice: openai.ToolChoiceOptionFunctionToolChoice(openai.ChatCompletionNamedToolChoiceFunctionParam{Name: submitJudgementFunction.Name}),
-		Seed:       openai.Int(openaiSeed),
 		Model:      j.model,
+	}
+
+	// Only include seed parameter for providers that support it (e.g., OpenAI, Mistral).
+	// Gemini's v1beta OpenAI-compatible endpoint rejects the seed parameter with a 400 error.
+	// See: https://discuss.ai.google.dev/t/openai-compatibility-not-fully-implemented/95991
+	if j.supportsSeed() {
+		params.Seed = openai.Int(openaiSeed)
 	}
 
 	completion, err := j.client.Chat.Completions.New(ctx, params)
