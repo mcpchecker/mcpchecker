@@ -23,8 +23,47 @@ type McpServerInfo interface {
 	GetMcpServers() []mcpproxy.Server
 }
 
+// ToolCallSummary provides structured access to tool call data.
+type ToolCallSummary struct {
+	Title     string `json:"title"`
+	Kind      string `json:"kind,omitempty"`
+	Status    string `json:"status,omitempty"`
+	RawInput  any    `json:"rawInput,omitempty"`
+	RawOutput any    `json:"rawOutput,omitempty"`
+}
+
+// TokenEstimate provides token count estimates for different components.
+// Uses tiktoken library with cl100k_base encoding (may differ 10-30% for non-OpenAI models).
+type TokenEstimate struct {
+	// InputTokens: initial prompt + tool results only (excludes system prompt,
+	// multi-turn context, and cache)
+	InputTokens int64 `json:"inputTokens"`
+	// OutputTokens: agent's final message + thinking + tool call params
+	OutputTokens int64 `json:"outputTokens"`
+	// PromptTokens: the initial prompt sent to the agent
+	PromptTokens int64 `json:"promptTokens"`
+	// MessageTokens: agent's final response message
+	MessageTokens int64 `json:"messageTokens"`
+	// ThinkingTokens: agent's reasoning/thinking content
+	ThinkingTokens int64 `json:"thinkingTokens"`
+	// ToolCallTokens: tool call parameters (agent -> tools)
+	ToolCallTokens int64 `json:"toolCallTokens"`
+	// ToolResultTokens: tool results (tools -> agent, counted as input)
+	ToolResultTokens int64 `json:"toolResultTokens"`
+	// TotalTokens is InputTokens + OutputTokens
+	TotalTokens int64 `json:"totalTokens"`
+	// Error indicates if tokenization failed (partial or complete failure)
+	Error string `json:"error,omitempty"`
+}
+
+// AgentResult provides access to the results of an agent execution.
 type AgentResult interface {
 	GetOutput() string
+	GetFinalMessage() string
+	GetToolCalls() []ToolCallSummary
+	GetThinking() string
+	GetRawUpdates() any
+	GetTokenEstimate() TokenEstimate
 }
 
 type agentSpecRunner struct {
@@ -38,6 +77,27 @@ type agentSpecRunnerResult struct {
 
 func (a *agentSpecRunnerResult) GetOutput() string {
 	return a.commandOutput
+}
+
+func (a *agentSpecRunnerResult) GetFinalMessage() string {
+	return a.commandOutput // Shell output is the final message
+}
+
+func (a *agentSpecRunnerResult) GetToolCalls() []ToolCallSummary {
+	return nil // Shell runner doesn't have structured tool call data
+}
+
+func (a *agentSpecRunnerResult) GetThinking() string {
+	return "" // Shell runner doesn't capture thinking
+}
+
+func (a *agentSpecRunnerResult) GetRawUpdates() any {
+	return nil // Shell runner doesn't have session updates
+}
+
+func (a *agentSpecRunnerResult) GetTokenEstimate() TokenEstimate {
+	// Shell runner doesn't support token counting - only ACP does
+	return TokenEstimate{}
 }
 
 func NewRunnerForSpec(spec *AgentSpec) (Runner, error) {

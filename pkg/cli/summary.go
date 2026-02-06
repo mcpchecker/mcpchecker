@@ -12,14 +12,15 @@ import (
 )
 
 type SummaryOutput struct {
-	ResultsFile       string        `json:"resultsFile"`
-	Tasks             []TaskSummary `json:"tasks"`
-	TasksTotal        int           `json:"tasksTotal"`
-	TasksPassed       int           `json:"tasksPassed"`
-	TaskPassRate      float64       `json:"taskPassRate"`
-	AssertionsTotal   int           `json:"assertionsTotal"`
-	AssertionsPassed  int           `json:"assertionsPassed"`
-	AssertionPassRate float64       `json:"assertionPassRate"`
+	ResultsFile         string        `json:"resultsFile"`
+	Tasks               []TaskSummary `json:"tasks"`
+	TasksTotal          int           `json:"tasksTotal"`
+	TasksPassed         int           `json:"tasksPassed"`
+	TaskPassRate        float64       `json:"taskPassRate"`
+	AssertionsTotal     int           `json:"assertionsTotal"`
+	AssertionsPassed    int           `json:"assertionsPassed"`
+	AssertionPassRate   float64       `json:"assertionPassRate"`
+	TotalTokensEstimate int64         `json:"totalTokensEstimate"`
 }
 
 type TaskSummary struct {
@@ -28,6 +29,8 @@ type TaskSummary struct {
 	AssertionsPassed bool     `json:"assertionsPassed"`
 	TaskError        string   `json:"taskError,omitempty"`
 	FailedAssertions []string `json:"failedAssertions,omitempty"`
+	TokensEstimated  int64    `json:"tokensEstimated,omitempty"`
+	TokenError       string   `json:"tokenError,omitempty"`
 }
 
 func NewSummaryCmd() *cobra.Command {
@@ -122,6 +125,13 @@ func buildSummaryOutput(resultsFile string, evalResults []*eval.EvalResult) Summ
 			}
 		}
 
+		// Collect token estimates
+		if result.TokenEstimate != nil {
+			taskSummary.TokensEstimated = result.TokenEstimate.TotalTokens
+			taskSummary.TokenError = result.TokenEstimate.Error
+			summary.TotalTokensEstimate += result.TokenEstimate.TotalTokens
+		}
+
 		summary.Tasks = append(summary.Tasks, taskSummary)
 	}
 
@@ -190,6 +200,21 @@ func outputTextSummary(evalResults []*eval.EvalResult, summary SummaryOutput) {
 		summary.TasksPassed, summary.TasksTotal, summary.TaskPassRate*100)
 	fmt.Printf("Assertions: %d/%d passed (%.2f%%)\n",
 		summary.AssertionsPassed, summary.AssertionsTotal, summary.AssertionPassRate*100)
+	if summary.TotalTokensEstimate > 0 {
+		// Check if any task had token errors
+		hasTokenErrors := false
+		for _, task := range summary.Tasks {
+			if task.TokenError != "" {
+				hasTokenErrors = true
+				break
+			}
+		}
+		if hasTokenErrors {
+			fmt.Printf("Tokens:     ~%d (incomplete - some counts failed)\n", summary.TotalTokensEstimate)
+		} else {
+			fmt.Printf("Tokens:     ~%d (estimate - excludes system prompt & cache)\n", summary.TotalTokensEstimate)
+		}
+	}
 }
 
 func outputJSONSummary(summary SummaryOutput) error {
@@ -206,4 +231,5 @@ func outputGitHubSummary(summary SummaryOutput) {
 	fmt.Printf("assertions-total=%d\n", summary.AssertionsTotal)
 	fmt.Printf("assertions-passed=%d\n", summary.AssertionsPassed)
 	fmt.Printf("assertion-pass-rate=%.4f\n", summary.AssertionPassRate)
+	fmt.Printf("tokens-estimated=%d\n", summary.TotalTokensEstimate)
 }
