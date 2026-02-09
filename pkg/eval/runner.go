@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"sort"
+	"sync"
 
 	"github.com/mcpchecker/mcpchecker/pkg/agent"
 	"github.com/mcpchecker/mcpchecker/pkg/extension/client"
@@ -46,6 +48,7 @@ type EvalRunner interface {
 type evalRunner struct {
 	spec             *EvalSpec
 	progressCallback ProgressCallback
+	parallelism      int // max concurrent tasks (1 = sequential)
 }
 
 var _ EvalRunner = &evalRunner{}
@@ -56,16 +59,26 @@ type taskConfig struct {
 	assertions *TaskAssertions
 }
 
-// NewRunner creates a new EvalRunner from an EvalSpec
-func NewRunner(spec *EvalSpec) (EvalRunner, error) {
+// NewRunnerWithParallelism creates a new EvalRunner from an EvalSpec with configurable parallelism
+func NewRunnerWithParallelism(spec *EvalSpec, parallelism int) (EvalRunner, error) {
 	if spec == nil {
 		return nil, fmt.Errorf("eval spec cannot be nil")
+	}
+
+	if parallelism <= 0 {
+		parallelism = 1
 	}
 
 	return &evalRunner{
 		spec:             spec,
 		progressCallback: NoopProgressCallback,
+		parallelism:      parallelism,
 	}, nil
+}
+
+// NewRunner creates a new EvalRunner from an EvalSpec (sequential execution)
+func NewRunner(spec *EvalSpec) (EvalRunner, error) {
+	return NewRunnerWithParallelism(spec, 1)
 }
 
 func (r *evalRunner) loadMcpConfig() (*mcpclient.MCPConfig, error) {
@@ -119,17 +132,14 @@ func (r *evalRunner) loadAgentSpec() (*agent.AgentSpec, error) {
 		return nil, fmt.Errorf("unknown builtin agent type: %s", builtinType)
 	}
 
-	// Enforce model requirement for this builtin type
 	if builtinAgent.RequiresModel() && agentRef.Model == "" {
 		return nil, fmt.Errorf("builtin type '%s' requires a model to be specified", builtinType)
 	}
 
-	// Validate environment (binaries, env vars, etc.) before using the agent
 	if err := builtinAgent.ValidateEnvironment(); err != nil {
 		return nil, fmt.Errorf("builtin type '%s' environment validation failed: %w", builtinType, err)
 	}
 
-	// Get the default spec for this builtin agent
 	agentSpec, err := builtinAgent.GetDefaults(agentRef.Model)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get defaults for builtin agent %s: %w", builtinType, err)
@@ -154,16 +164,36 @@ func (r *evalRunner) RunWithProgress(ctx context.Context, taskPattern string, ca
 		return nil, fmt.Errorf("failed to compile regexp for task name match: %w", err)
 	}
 
+	// Collect task configs first (fast operation)
+	taskConfigs, err := r.collectTaskConfigs(taskMatcher)
+	if err != nil {
+		return nil, err
+	}
+
+	setupSteps := 5
+	if len(r.spec.Config.Extensions) > 0 {
+		setupSteps++
+	}
+
 	r.progressCallback(ProgressEvent{
-		Type:    EventEvalStart,
-		Message: "Starting evaluation",
+		Type:       EventSetupStart,
+		Message:    "Initializing environment",
+		TotalSteps: setupSteps,
 	})
 
+	r.progressCallback(ProgressEvent{
+		Type:    EventSetupStep,
+		Message: "Loading MCP configuration",
+	})
 	mcpConfig, err := r.loadMcpConfig()
 	if err != nil {
 		return nil, err
 	}
 
+	r.progressCallback(ProgressEvent{
+		Type:    EventSetupStep,
+		Message: "Connecting to MCP servers",
+	})
 	mcpManager, err := mcpclient.NewManager(ctx, mcpConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create mcp manager: %w", err)
@@ -174,16 +204,28 @@ func (r *evalRunner) RunWithProgress(ctx context.Context, taskPattern string, ca
 
 	ctx = mcpclient.ManagerToContext(ctx, mcpManager)
 
+	r.progressCallback(ProgressEvent{
+		Type:    EventSetupStep,
+		Message: "Loading agent specification",
+	})
 	agentSpec, err := r.loadAgentSpec()
 	if err != nil {
 		return nil, fmt.Errorf("failed to load agent spec: %w", err)
 	}
 
+	r.progressCallback(ProgressEvent{
+		Type:    EventSetupStep,
+		Message: "Creating agent runner",
+	})
 	runner, err := agent.NewRunnerForSpec(agentSpec)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create agent runner from spec: %w", err)
 	}
 
+	r.progressCallback(ProgressEvent{
+		Type:    EventSetupStep,
+		Message: "Initializing LLM judge",
+	})
 	judge, err := llmjudge.NewLLMJudge(r.spec.Config.LLMJudge)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create llm judge from spec: %w", err)
@@ -196,29 +238,79 @@ func (r *evalRunner) RunWithProgress(ctx context.Context, taskPattern string, ca
 	manager := client.NewManager(resolver, client.ExtensionOptions{})
 	defer manager.ShutdownAll(ctx)
 
-	for alias, ext := range r.spec.Config.Extensions {
-		if err := manager.Register(alias, ext); err != nil {
-			return nil, fmt.Errorf("registering extension %q (%s): %w", alias, ext.Package, err)
+	if len(r.spec.Config.Extensions) > 0 {
+		r.progressCallback(ProgressEvent{
+			Type:    EventSetupStep,
+			Message: "Loading extensions",
+		})
+		for alias, ext := range r.spec.Config.Extensions {
+			if err := manager.Register(alias, ext); err != nil {
+				return nil, fmt.Errorf("registering extension %q (%s): %w", alias, ext.Package, err)
+			}
 		}
 	}
+
+	r.progressCallback(ProgressEvent{
+		Type:    EventSetupComplete,
+		Message: "Setup complete",
+	})
 
 	ctx = client.ManagerToContext(ctx, manager)
 
 	ctx = llmjudge.WithJudge(ctx, judge)
 
-	taskConfigs, err := r.collectTaskConfigs(taskMatcher)
-	if err != nil {
-		return nil, err
+	totalSteps := len(taskConfigs) * 4
+
+	r.progressCallback(ProgressEvent{
+		Type:       EventEvalStart,
+		Message:    "Starting evaluation",
+		TotalTasks: totalSteps,
+	})
+
+	type indexedResult struct {
+		index  int
+		result *EvalResult
+		err    error
 	}
+	resultsCh := make(chan indexedResult, len(taskConfigs))
+
+	sem := make(chan struct{}, r.parallelism)
+
+	var wg sync.WaitGroup
+	for i, tc := range taskConfigs {
+		wg.Add(1)
+		go func(idx int, taskCfg taskConfig) {
+			defer wg.Done()
+
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			result, err := r.runTask(ctx, runner, mcpManager, taskCfg)
+			resultsCh <- indexedResult{index: idx, result: result, err: err}
+		}(i, tc)
+	}
+
+	go func() {
+		wg.Wait()
+		close(resultsCh)
+	}()
+
+	indexedResults := make([]indexedResult, 0, len(taskConfigs))
+	for ir := range resultsCh {
+		indexedResults = append(indexedResults, ir)
+	}
+
+	sort.Slice(indexedResults, func(i, j int) bool {
+		return indexedResults[i].index < indexedResults[j].index
+	})
 
 	results := make([]*EvalResult, 0, len(taskConfigs))
 	var runErr error
-	for _, tc := range taskConfigs {
-		result, err := r.runTask(ctx, runner, mcpManager, tc)
-		if err != nil {
-			runErr = errors.Join(runErr, err)
+	for _, ir := range indexedResults {
+		if ir.err != nil {
+			runErr = errors.Join(runErr, ir.err)
 		} else {
-			results = append(results, result)
+			results = append(results, ir.result)
 		}
 	}
 
@@ -256,7 +348,6 @@ func (r *evalRunner) collectTaskConfigs(rx *regexp.Regexp) ([]taskConfig, error)
 				continue
 			}
 
-			// Filter by label selector if specified
 			if !matchesLabelSelector(taskSpec.Metadata.Labels, ts.LabelSelector) {
 				continue
 			}
@@ -290,13 +381,13 @@ func (r *evalRunner) runTask(
 		Task:    result,
 	})
 
+	taskRunner, manager, cleanup, err := r.setupTaskResources(ctx, tc, mcpManager, result)
+
 	r.progressCallback(ProgressEvent{
 		Type:    EventTaskSetup,
 		Message: fmt.Sprintf("Setting up task: %s", tc.spec.Metadata.Name),
 		Task:    result,
 	})
-
-	taskRunner, manager, cleanup, err := r.setupTaskResources(ctx, tc, mcpManager, result)
 	if err != nil {
 		result.TaskPassed = false
 		result.TaskError = err.Error()
@@ -390,7 +481,6 @@ func (r *evalRunner) executeTaskSteps(
 		result.TaskPassed = false
 		result.TaskError = err.Error()
 		result.AgentExecutionError = true
-		// Extract agent output from phase output for backwards compatibility
 		if agentOutput != nil && len(agentOutput.Steps) > 0 {
 			if out, ok := agentOutput.Steps[0].Outputs["output"]; ok {
 				result.TaskOutput = out
@@ -399,7 +489,6 @@ func (r *evalRunner) executeTaskSteps(
 		return
 	}
 
-	// Extract agent output from phase output for backwards compatibility
 	if agentOutput != nil && len(agentOutput.Steps) > 0 {
 		if out, ok := agentOutput.Steps[0].Outputs["output"]; ok {
 			result.TaskOutput = out
@@ -433,16 +522,12 @@ func (r *evalRunner) extractJudgeResults(verifyOutput *task.PhaseOutput, result 
 		return
 	}
 
-	// Look for llmJudge step outputs and extract their results
 	for _, step := range verifyOutput.Steps {
 		if step == nil || step.Type != "llmJudge" {
 			continue
 		}
-		// The judge's reason is in Message for both pass and fail
 		result.TaskJudgeReason = step.Message
-		// If there was a judge error (API failure), it would have caused an error return
-		// so we don't need to check for TaskJudgeError here - the verify phase would have failed
-		break // Only capture first llmJudge result
+		break
 	}
 }
 
@@ -458,7 +543,6 @@ func (r *evalRunner) evaluateTaskAssertions(
 		result.AssertionResults = assertionResults
 		result.AllAssertionsPassed = assertionResults.Succeeded()
 	} else {
-		// No assertions = all pass
 		result.AllAssertionsPassed = true
 	}
 }

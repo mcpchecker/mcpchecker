@@ -6,7 +6,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/fatih/color"
 	"github.com/mcpchecker/mcpchecker/pkg/eval"
@@ -20,6 +24,7 @@ func NewEvalCmd() *cobra.Command {
 	var verbose bool
 	var run string
 	var labelSelector string
+	var parallel int
 
 	cmd := &cobra.Command{
 		Use:   "check [eval-config-file]",
@@ -42,8 +47,13 @@ func NewEvalCmd() *cobra.Command {
 				}
 			}
 
-			// Create runner
-			runner, err := eval.NewRunner(spec)
+			// Set parallelism (0 = auto-detect based on CPU count)
+			if parallel == 0 {
+				parallel = runtime.NumCPU()
+			}
+
+			// Create runner with parallelism
+			runner, err := eval.NewRunnerWithParallelism(spec, parallel)
 			if err != nil {
 				return fmt.Errorf("failed to create eval runner: %w", err)
 			}
@@ -79,23 +89,36 @@ func NewEvalCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Verbose output")
 	cmd.Flags().StringVarP(&run, "run", "r", "", "Regular expression to match task names to run (unanchored, like go test -run)")
 	cmd.Flags().StringVarP(&labelSelector, "label-selector", "l", "", "Filter taskSets by label (format: key=value, e.g., suite=kubernetes)")
+	cmd.Flags().IntVarP(&parallel, "parallel", "p", 1, "Number of parallel tasks (0 = auto-detect CPU count, 1 = sequential)")
 
 	return cmd
 }
 
 // progressDisplay handles interactive progress display
 type progressDisplay struct {
-	verbose bool
-	green   *color.Color
-	red     *color.Color
-	yellow  *color.Color
-	cyan    *color.Color
-	bold    *color.Color
+	verbose    bool
+	mu         sync.Mutex
+	results    map[string]*eval.EvalResult
+	started    bool
+	finished   bool
+	green      *color.Color
+	red        *color.Color
+	yellow     *color.Color
+	cyan       *color.Color
+	bold       *color.Color
+	running    int
+	passed     int
+	failed     int
+	total      int
+	startTime  time.Time
+	ticker     *time.Ticker
+	stopTicker chan bool
 }
 
 func newProgressDisplay(verbose bool) *progressDisplay {
 	return &progressDisplay{
 		verbose: verbose,
+		results: make(map[string]*eval.EvalResult),
 		green:   color.New(color.FgGreen),
 		red:     color.New(color.FgRed),
 		yellow:  color.New(color.FgYellow),
@@ -104,70 +127,142 @@ func newProgressDisplay(verbose bool) *progressDisplay {
 	}
 }
 
+func (d *progressDisplay) renderProgress() {
+	if d.finished {
+		return
+	}
+
+	spinnerFrames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+	elapsed := time.Since(d.startTime)
+	frame := spinnerFrames[int(elapsed.Milliseconds()/100)%len(spinnerFrames)]
+	completed := d.passed + d.failed
+
+	fmt.Fprintf(os.Stderr, "\r%s Running: %d | Passed: %d | Failed: %d | Completed: %d/%d | Elapsed: %ds",
+		frame, d.running, d.passed, d.failed, completed, d.total, int(elapsed.Seconds()))
+}
+
 func (d *progressDisplay) handleProgress(event eval.ProgressEvent) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
 	switch event.Type {
+	case eval.EventSetupStart:
+		d.bold.Println("\n=== Initializing Evaluation ===")
+
+	case eval.EventSetupStep:
+		fmt.Printf("  → %s\n", event.Message)
+
+	case eval.EventSetupComplete:
+
 	case eval.EventEvalStart:
-		d.bold.Println("\n=== Starting Evaluation ===")
+		d.started = true
+		d.total = event.TotalTasks / 4
 
 	case eval.EventTaskStart:
-		fmt.Println()
-		d.cyan.Printf("Task: %s\n", event.Task.TaskName)
-		if event.Task.Difficulty != "" {
-			fmt.Printf("  Difficulty: %s\n", event.Task.Difficulty)
-		}
+		if event.Task != nil {
+			d.results[event.Task.TaskName] = event.Task
+			d.running++
 
-	case eval.EventTaskSetup:
-		if d.verbose {
-			fmt.Printf("  → Setting up task environment...\n")
-		}
+			if d.startTime.IsZero() {
+				fmt.Printf("\n%s\n", d.bold.Sprint("=== Running Tasks ==="))
+				d.startTime = time.Now()
 
-	case eval.EventTaskRunning:
-		fmt.Printf("  → Running agent...\n")
-
-	case eval.EventTaskVerifying:
-		fmt.Printf("  → Verifying results...\n")
-
-	case eval.EventTaskAssertions:
-		if d.verbose {
-			fmt.Printf("  → Evaluating assertions...\n")
-		}
-
-	case eval.EventTaskError:
-		task := event.Task
-		d.red.Printf("  ✗ Task failed during setup\n")
-		if task.TaskError != "" {
-			fmt.Printf("    Error: %s\n", task.TaskError)
-		}
-
-	case eval.EventTaskComplete:
-		task := event.Task
-		if task.TaskPassed && task.AllAssertionsPassed {
-			d.green.Printf("  ✓ Task passed\n")
-		} else if task.TaskPassed && !task.AllAssertionsPassed {
-			d.yellow.Printf("  ~ Task passed but assertions failed\n")
-		} else {
-			if task.AgentExecutionError {
-				d.red.Printf("  ✗ Agent failed to run\n")
-				if task.TaskError != "" || task.TaskOutput != "" {
-					errorFile, err := saveErrorToFile(task.TaskName, task.TaskError, task.TaskOutput)
-					if err != nil {
-						// If we can't save to file, fall back to printing inline
-						fmt.Printf("    Error: %s\n", task.TaskError)
-					} else {
-						fmt.Printf("    Error details saved to: %s\n", errorFile)
+				d.ticker = time.NewTicker(100 * time.Millisecond)
+				d.stopTicker = make(chan bool)
+				go func() {
+					for {
+						select {
+						case <-d.ticker.C:
+							d.mu.Lock()
+							d.renderProgress()
+							d.mu.Unlock()
+						case <-d.stopTicker:
+							return
+						}
 					}
-				}
-			} else {
-				d.red.Printf("  ✗ Task failed\n")
-				if task.TaskError != "" {
-					fmt.Printf("    Error: %s\n", task.TaskError)
-				}
+				}()
 			}
+			d.renderProgress()
+		}
+
+	case eval.EventTaskSetup, eval.EventTaskRunning, eval.EventTaskVerifying, eval.EventTaskAssertions:
+
+	case eval.EventTaskComplete, eval.EventTaskError:
+		if event.Task != nil {
+			d.results[event.Task.TaskName] = event.Task
+			if event.Task.TaskPassed {
+				d.passed++
+			} else {
+				d.failed++
+			}
+			d.running--
+			d.renderProgress()
 		}
 
 	case eval.EventEvalComplete:
-		fmt.Println()
-		d.bold.Println("=== Evaluation Complete ===")
+		d.finished = true
+
+		if d.ticker != nil {
+			d.ticker.Stop()
+			close(d.stopTicker)
+		}
+
+		elapsed := time.Since(d.startTime)
+		fmt.Fprintf(os.Stderr, "\r✓ Done in %ds (Passed: %d, Failed: %d)\n",
+			int(elapsed.Seconds()), d.passed, d.failed)
+
+		d.displayBufferedResults()
+
+		d.bold.Println("\n=== Evaluation Complete ===")
+	}
+}
+
+func (d *progressDisplay) displayBufferedResults() {
+	names := make([]string, 0, len(d.results))
+	for name := range d.results {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	for _, name := range names {
+		result := d.results[name]
+		d.displayTaskResult(result)
+	}
+}
+
+func (d *progressDisplay) displayTaskResult(result *eval.EvalResult) {
+	fmt.Println()
+	d.cyan.Printf("Task: %s\n", result.TaskName)
+	if result.Difficulty != "" {
+		fmt.Printf("  Difficulty: %s\n", result.Difficulty)
+	}
+
+	if result.TaskPassed && result.AllAssertionsPassed {
+		d.green.Printf("  ✓ Task passed\n")
+	} else if result.TaskPassed && !result.AllAssertionsPassed {
+		d.yellow.Printf("  ~ Task passed but assertions failed\n")
+	} else {
+		if result.AgentExecutionError {
+			d.red.Printf("  ✗ Agent failed to run\n")
+			if result.TaskError != "" || result.TaskOutput != "" {
+				errorFile, err := saveErrorToFile(result.TaskName, result.TaskError, result.TaskOutput)
+				if err != nil {
+					// If we can't save to file, fall back to printing inline
+					fmt.Printf("    Error: %s\n", result.TaskError)
+				} else {
+					fmt.Printf("    Error details saved to: %s\n", errorFile)
+				}
+			}
+		} else {
+			d.red.Printf("  ✗ Task failed\n")
+			if result.TaskError != "" {
+				fmt.Printf("    Error: %s\n", result.TaskError)
+			}
+		}
+	}
+
+	if d.verbose && result.TaskOutput != "" {
+		fmt.Printf("  Output: %s\n", result.TaskOutput)
 	}
 }
 
