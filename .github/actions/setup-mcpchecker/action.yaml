@@ -126,11 +126,11 @@ runs:
         # Extract zips
         echo "Extracting mcpchecker..."
         unzip -q "$DOWNLOAD_DIR/mcpchecker.zip" -d "$DOWNLOAD_DIR"
-        mv "$DOWNLOAD_DIR/mcpchecker-$BINARY_SUFFIX$BIN_EXT" "$MCPCHECKER_BIN"
+        mv "$DOWNLOAD_DIR/mcpchecker$BIN_EXT" "$MCPCHECKER_BIN"
 
         echo "Extracting agent..."
         unzip -q "$DOWNLOAD_DIR/agent.zip" -d "$DOWNLOAD_DIR"
-        mv "$DOWNLOAD_DIR/agent-$BINARY_SUFFIX$BIN_EXT" "$AGENT_BIN"
+        mv "$DOWNLOAD_DIR/agent$BIN_EXT" "$AGENT_BIN"
 
         chmod +x "$MCPCHECKER_BIN" "$AGENT_BIN"
         rm -rf "$DOWNLOAD_DIR"
