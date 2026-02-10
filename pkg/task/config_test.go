@@ -37,6 +37,42 @@ func TestFromFile(t *testing.T) {
 		expected  *TaskConfig
 		expectErr bool
 	}{
+		"create pod inline no verify": {
+			file: "create-pod-inline-no-verify.yaml",
+			expected: &TaskConfig{
+				TypeMeta: util.TypeMeta{
+					Kind: KindTask,
+				},
+				Metadata: TaskMetadata{
+					Name:       "create pod inline",
+					Difficulty: DifficultyEasy,
+				},
+				Spec: &TaskSpec{
+					Setup: []*steps.StepConfig{{
+						Config: map[string]json.RawMessage{
+							"script": mustMarshalStep(&util.Step{
+								Inline: `#!/usr/bin/env bash
+kubectl delete namespace create-pod-test --ignore-not-found
+kubectl create namespace create-pod-test`,
+							}),
+						},
+					}},
+					Cleanup: []*steps.StepConfig{{
+						Config: map[string]json.RawMessage{
+							"script": mustMarshalStep(&util.Step{
+								Inline: `#!/usr/bin/env bash
+kubectl delete pod web-server -n create-pod-test --ignore-not-found
+kubectl delete namespace create-pod-test --ignore-not-found`,
+							}),
+						},
+					}},
+					Prompt: &util.Step{
+						Inline: "Please create a nginx pod named web-server in the create-pod-test namespace",
+					},
+				},
+				basePath: basePath,
+			},
+		},
 		"create pod inline": {
 			file: "create-pod-inline.yaml",
 			expected: &TaskConfig{

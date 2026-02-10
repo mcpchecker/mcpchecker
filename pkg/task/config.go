@@ -117,21 +117,23 @@ func Read(data []byte, basePath string) (*TaskConfig, error) {
 	spec.basePath = basePath
 
 	if wrapper.GetAPIVersion() == util.APIVersionV1Alpha1 {
-		if wrapper.Steps == nil {
+		s := wrapper.Steps
+		if s == nil {
 			return nil, fmt.Errorf("v1alpha1 requires steps field")
 		}
 
-		if err := resolveStepPath(wrapper.Steps.SetupScript, basePath); err != nil {
+		if err := resolveStepPath(s.SetupScript, basePath); err != nil {
 			return nil, fmt.Errorf("failed to resolve setup script path: %w", err)
 		}
-		if err := resolveStepPath(wrapper.Steps.CleanupScript, basePath); err != nil {
+		if err := resolveStepPath(s.CleanupScript, basePath); err != nil {
 			return nil, fmt.Errorf("failed to resolve cleanup script path: %w", err)
 		}
-		if err := resolveStepPath(wrapper.Steps.VerifyScript.Step, basePath); err != nil {
-			return nil, fmt.Errorf("failed to resolve verify script path: %w", err)
+		if !s.VerifyScript.IsEmpty() {
+			if err := resolveStepPath(s.VerifyScript.Step, basePath); err != nil {
+				return nil, fmt.Errorf("failed to resolve verify script path: %w", err)
+			}
 		}
-
-		spec.Spec, err = translateV1Alpha1ToSteps(wrapper.Steps)
+		spec.Spec, err = translateV1Alpha1ToSteps(s)
 		if err != nil {
 			return nil, fmt.Errorf("failed to convert v1alpha1 format to v1alpha1: %w", err)
 		}

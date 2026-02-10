@@ -1,0 +1,17 @@
+kind: Task
+metadata:
+  name: "create pod inline"
+  difficulty: easy
+steps:
+  setup:
+    inline: |-
+      #!/usr/bin/env bash
+      kubectl delete namespace create-pod-test --ignore-not-found
+      kubectl create namespace create-pod-test
+  cleanup:
+    inline: |-
+      #!/usr/bin/env bash
+      kubectl delete pod web-server -n create-pod-test --ignore-not-found
+      kubectl delete namespace create-pod-test --ignore-not-found
+  prompt:
+    inline: Please create a nginx pod named web-server in the create-pod-test namespace
