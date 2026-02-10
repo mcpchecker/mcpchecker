@@ -99,13 +99,6 @@ type progressDisplay struct {
 	verbose    bool
 	mu         sync.Mutex
 	results    map[string]*eval.EvalResult
-	started    bool
-	finished   bool
-	green      *color.Color
-	red        *color.Color
-	yellow     *color.Color
-	cyan       *color.Color
-	bold       *color.Color
 	running    int
 	passed     int
 	failed     int
@@ -119,16 +112,11 @@ func newProgressDisplay(verbose bool) *progressDisplay {
 	return &progressDisplay{
 		verbose: verbose,
 		results: make(map[string]*eval.EvalResult),
-		green:   color.New(color.FgGreen),
-		red:     color.New(color.FgRed),
-		yellow:  color.New(color.FgYellow),
-		cyan:    color.New(color.FgCyan),
-		bold:    color.New(color.Bold),
 	}
 }
 
 func (d *progressDisplay) renderProgress() {
-	if d.finished {
+	if d.ticker == nil {
 		return
 	}
 
@@ -137,7 +125,7 @@ func (d *progressDisplay) renderProgress() {
 	frame := spinnerFrames[int(elapsed.Milliseconds()/100)%len(spinnerFrames)]
 	completed := d.passed + d.failed
 
-	fmt.Fprintf(os.Stderr, "\r%s Running: %d | Passed: %d | Failed: %d | Completed: %d/%d | Elapsed: %ds",
+	fmt.Fprintf(os.Stderr, "\r%s Running: %d | Passed: %d | Failed: %d | Completed: %d/%d | Elapsed: %ds\033[K",
 		frame, d.running, d.passed, d.failed, completed, d.total, int(elapsed.Seconds()))
 }
 
@@ -147,7 +135,7 @@ func (d *progressDisplay) handleProgress(event eval.ProgressEvent) {
 
 	switch event.Type {
 	case eval.EventSetupStart:
-		d.bold.Println("\n=== Initializing Evaluation ===")
+		fmt.Println("\n=== Initializing Evaluation ===")
 
 	case eval.EventSetupStep:
 		fmt.Printf("  → %s\n", event.Message)
@@ -155,7 +143,6 @@ func (d *progressDisplay) handleProgress(event eval.ProgressEvent) {
 	case eval.EventSetupComplete:
 
 	case eval.EventEvalStart:
-		d.started = true
 		d.total = event.TotalTasks / 4
 
 	case eval.EventTaskStart:
@@ -164,15 +151,16 @@ func (d *progressDisplay) handleProgress(event eval.ProgressEvent) {
 			d.running++
 
 			if d.startTime.IsZero() {
-				fmt.Printf("\n%s\n", d.bold.Sprint("=== Running Tasks ==="))
+				fmt.Println("\n=== Running Tasks ===")
 				d.startTime = time.Now()
 
 				d.ticker = time.NewTicker(100 * time.Millisecond)
 				d.stopTicker = make(chan bool)
+				ticker := d.ticker
 				go func() {
 					for {
 						select {
-						case <-d.ticker.C:
+						case <-ticker.C:
 							d.mu.Lock()
 							d.renderProgress()
 							d.mu.Unlock()
@@ -200,11 +188,10 @@ func (d *progressDisplay) handleProgress(event eval.ProgressEvent) {
 		}
 
 	case eval.EventEvalComplete:
-		d.finished = true
-
 		if d.ticker != nil {
 			d.ticker.Stop()
 			close(d.stopTicker)
+			d.ticker = nil
 		}
 
 		elapsed := time.Since(d.startTime)
@@ -213,7 +200,7 @@ func (d *progressDisplay) handleProgress(event eval.ProgressEvent) {
 
 		d.displayBufferedResults()
 
-		d.bold.Println("\n=== Evaluation Complete ===")
+		fmt.Println("\n=== Evaluation Complete ===")
 	}
 }
 
@@ -232,29 +219,28 @@ func (d *progressDisplay) displayBufferedResults() {
 
 func (d *progressDisplay) displayTaskResult(result *eval.EvalResult) {
 	fmt.Println()
-	d.cyan.Printf("Task: %s\n", result.TaskName)
+	fmt.Printf("Task: %s\n", result.TaskName)
 	if result.Difficulty != "" {
 		fmt.Printf("  Difficulty: %s\n", result.Difficulty)
 	}
 
 	if result.TaskPassed && result.AllAssertionsPassed {
-		d.green.Printf("  ✓ Task passed\n")
+		fmt.Printf("  ✓ Task passed\n")
 	} else if result.TaskPassed && !result.AllAssertionsPassed {
-		d.yellow.Printf("  ~ Task passed but assertions failed\n")
+		fmt.Printf("  ~ Task passed but assertions failed\n")
 	} else {
 		if result.AgentExecutionError {
-			d.red.Printf("  ✗ Agent failed to run\n")
+			fmt.Printf("  ✗ Agent failed to run\n")
 			if result.TaskError != "" || result.TaskOutput != "" {
 				errorFile, err := saveErrorToFile(result.TaskName, result.TaskError, result.TaskOutput)
 				if err != nil {
-					// If we can't save to file, fall back to printing inline
 					fmt.Printf("    Error: %s\n", result.TaskError)
 				} else {
 					fmt.Printf("    Error details saved to: %s\n", errorFile)
 				}
 			}
 		} else {
-			d.red.Printf("  ✗ Task failed\n")
+			fmt.Printf("  ✗ Task failed\n")
 			if result.TaskError != "" {
 				fmt.Printf("    Error: %s\n", result.TaskError)
 			}

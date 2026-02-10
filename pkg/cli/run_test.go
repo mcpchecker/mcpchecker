@@ -19,15 +19,16 @@ func TestProgressDisplay_EventHandling(t *testing.T) {
 		wantPassed    int
 		wantFailed    int
 		wantTotal     int
-		wantStarted   bool
-		wantFinished  bool
+		wantStarted bool
+		tickerStopped bool
 	}{
 		{
 			name: "eval start sets total tasks",
 			events: []eval.ProgressEvent{
-				{Type: eval.EventEvalStart, TotalTasks: 12}, // 3 tasks * 4 phases
+				{Type: eval.EventEvalStart, TotalTasks: 12},
 			},
-			wantTotal: 3,
+			wantTotal:     3,
+			tickerStopped: true,
 		},
 		{
 			name: "task start increments running",
@@ -79,18 +80,18 @@ func TestProgressDisplay_EventHandling(t *testing.T) {
 			wantTotal:   3,
 		},
 		{
-			name: "eval complete sets finished flag",
+			name: "eval complete stops ticker",
 			events: []eval.ProgressEvent{
 				{Type: eval.EventEvalStart, TotalTasks: 4},
 				{Type: eval.EventTaskStart, Task: &eval.EvalResult{TaskName: "task1"}},
 				{Type: eval.EventTaskComplete, Task: &eval.EvalResult{TaskName: "task1", TaskPassed: true}},
 				{Type: eval.EventEvalComplete},
 			},
-			wantRunning:  0,
-			wantPassed:   1,
-			wantFailed:   0,
-			wantTotal:    1,
-			wantFinished: true,
+			wantRunning:   0,
+			wantPassed:    1,
+			wantFailed:    0,
+			wantTotal:     1,
+			tickerStopped: true,
 		},
 	}
 
@@ -114,11 +115,12 @@ func TestProgressDisplay_EventHandling(t *testing.T) {
 			if d.total != tt.wantTotal {
 				t.Errorf("total = %d, want %d", d.total, tt.wantTotal)
 			}
-			if d.finished != tt.wantFinished {
-				t.Errorf("finished = %v, want %v", d.finished, tt.wantFinished)
+			tickerStopped := d.ticker == nil
+			if tickerStopped != tt.tickerStopped {
+				t.Errorf("ticker stopped = %v, want %v", tickerStopped, tt.tickerStopped)
 			}
 
-			if d.ticker != nil && !d.finished {
+			if d.ticker != nil {
 				d.ticker.Stop()
 				close(d.stopTicker)
 			}
@@ -174,7 +176,6 @@ func TestProgressDisplay_ThreadSafety(t *testing.T) {
 }
 
 func TestProgressDisplay_RenderProgress(t *testing.T) {
-	// Redirect stderr to capture output
 	oldStderr := os.Stderr
 	r, w, _ := os.Pipe()
 	os.Stderr = w
@@ -185,10 +186,11 @@ func TestProgressDisplay_RenderProgress(t *testing.T) {
 	d.passed = 5
 	d.failed = 1
 	d.total = 10
+	d.ticker = time.NewTicker(100 * time.Millisecond)
+	defer d.ticker.Stop()
 
 	d.renderProgress()
 
-	// Restore stderr
 	w.Close()
 	os.Stderr = oldStderr
 
@@ -212,19 +214,16 @@ func TestProgressDisplay_RenderProgress(t *testing.T) {
 	}
 }
 
-func TestProgressDisplay_RenderProgress_WhenFinished(t *testing.T) {
-	// Redirect stderr to capture output
+func TestProgressDisplay_RenderProgress_WhenStopped(t *testing.T) {
 	oldStderr := os.Stderr
 	r, w, _ := os.Pipe()
 	os.Stderr = w
 
 	d := newProgressDisplay(false)
-	d.finished = true
 	d.startTime = time.Now()
 
 	d.renderProgress()
 
-	// Restore stderr
 	w.Close()
 	os.Stderr = oldStderr
 
@@ -232,20 +231,19 @@ func TestProgressDisplay_RenderProgress_WhenFinished(t *testing.T) {
 	buf.ReadFrom(r)
 	output := buf.String()
 
-	// Should produce no output when finished
 	if output != "" {
-		t.Errorf("expected no output when finished, got: %q", output)
+		t.Errorf("expected no output when ticker is nil, got: %q", output)
 	}
 }
 
 func TestProgressDisplay_SpinnerAnimation(t *testing.T) {
 	d := newProgressDisplay(false)
 	d.startTime = time.Now()
+	d.ticker = time.NewTicker(100 * time.Millisecond)
+	defer d.ticker.Stop()
 
-	// Wait a bit to change the spinner frame
 	time.Sleep(150 * time.Millisecond)
 
-	// Redirect stderr
 	oldStderr := os.Stderr
 	r, w, _ := os.Pipe()
 	os.Stderr = w
