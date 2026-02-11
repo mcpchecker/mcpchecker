@@ -17,6 +17,11 @@ inputs:
     required: false
     default: ''
 
+  label-selector:
+    description: 'Label selector to filter tasks (e.g., "env=prod,tier=backend")'
+    required: false
+    default: ''
+
   output-format:
     description: 'Output format: text or json'
     required: false
@@ -143,6 +148,9 @@ runs:
         fi
         if [ -n "${{ inputs.task-filter }}" ]; then
           CMD+=("--run" "${{ inputs.task-filter }}")
+        fi
+        if [ -n "${{ inputs.label-selector }}" ]; then
+          CMD+=("--label-selector" "${{ inputs.label-selector }}")
         fi
         if [ "${{ inputs.verbose }}" = "true" ]; then
           CMD+=("--verbose")
