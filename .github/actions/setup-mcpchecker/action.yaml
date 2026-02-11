@@ -123,13 +123,14 @@ runs:
           exit 1
         fi
 
-        # Extract zips
+        # Extract zips (-o to overwrite without prompting, since both zips
+        # may contain common files like CHANGELOG.md)
         echo "Extracting mcpchecker..."
-        unzip -q "$DOWNLOAD_DIR/mcpchecker.zip" -d "$DOWNLOAD_DIR"
+        unzip -oq "$DOWNLOAD_DIR/mcpchecker.zip" -d "$DOWNLOAD_DIR"
         mv "$DOWNLOAD_DIR/mcpchecker$BIN_EXT" "$MCPCHECKER_BIN"
 
         echo "Extracting agent..."
-        unzip -q "$DOWNLOAD_DIR/agent.zip" -d "$DOWNLOAD_DIR"
+        unzip -oq "$DOWNLOAD_DIR/agent.zip" -d "$DOWNLOAD_DIR"
         mv "$DOWNLOAD_DIR/agent$BIN_EXT" "$AGENT_BIN"
 
         chmod +x "$MCPCHECKER_BIN" "$AGENT_BIN"
