@@ -44,6 +44,8 @@ archives:
     formats:
       - zip
     name_template: "mcpchecker-{{ .Os }}-{{ .Arch }}"
+    files:
+      - none*
 
   - id: agent-archive
     ids:
@@ -51,6 +53,8 @@ archives:
     formats:
       - zip
     name_template: "agent-{{ .Os }}-{{ .Arch }}"
+    files:
+      - none*
 
 signs:
   - cmd: cosign
