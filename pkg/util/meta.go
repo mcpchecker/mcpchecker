@@ -10,6 +10,9 @@ const (
 	APIVersionV1Alpha2 = "mcpchecker/v1alpha2"
 )
 
+// ErrWrongKind indicates the YAML file has a different kind than expected
+var ErrWrongKind = errors.New("wrong kind")
+
 type TypeMeta struct {
 	APIVersion string `json:"apiVersion,omitempty"`
 	Kind       string `json:"kind"`
@@ -27,7 +30,7 @@ func (t *TypeMeta) Validate(expectedKind string) error {
 	var err error
 	err = errors.Join(err, ValidateAPIVersion(t.APIVersion))
 	if t.Kind != expectedKind {
-		err = errors.Join(err, fmt.Errorf("invalid kind '%s': expected '%s'", t.Kind, expectedKind))
+		err = errors.Join(err, fmt.Errorf("%w: got '%s', expected '%s'", ErrWrongKind, t.Kind, expectedKind))
 	}
 
 	return err

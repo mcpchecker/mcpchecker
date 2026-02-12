@@ -249,6 +249,10 @@ func (r *evalRunner) collectTaskConfigs(rx *regexp.Regexp) ([]taskConfig, error)
 		for _, path := range paths {
 			taskSpec, err := task.FromFile(path)
 			if err != nil {
+				// Skip files that are not tasks (e.g., eval.yaml files in the same directory)
+				if errors.Is(err, util.ErrWrongKind) {
+					continue
+				}
 				return nil, fmt.Errorf("failed to load task at path %s: %w", path, err)
 			}
 
