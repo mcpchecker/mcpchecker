@@ -129,6 +129,8 @@ func printEvalResult(result *eval.EvalResult, opts viewOptions) {
 
 	printAssertions(result.AssertionResults, yellow)
 	printTokenEstimate(result.TokenEstimate)
+	printActualAgentTokenUsage(result.TokenEstimate)
+	printJudgeTokenUsage(result.JudgeTokenUsage)
 	printCallHistory(result.CallHistory, opts)
 
 	if opts.showTimeline {
@@ -148,7 +150,7 @@ func printTokenEstimate(estimate *agent.TokenEstimate) {
 		return
 	}
 
-	fmt.Printf("  Tokens: ~%d (in=~%d, out=~%d)",
+	fmt.Printf("  Estimated Tokens: ~%d (in=~%d, out=~%d)",
 		estimate.TotalTokens, estimate.InputTokens, estimate.OutputTokens)
 	if estimate.Error != "" {
 		fmt.Printf(" [incomplete - %s]", estimate.Error)
@@ -174,6 +176,25 @@ func printTokenEstimate(estimate *agent.TokenEstimate) {
 		}
 	}
 	fmt.Println()
+}
+
+func printActualAgentTokenUsage(estimate *agent.TokenEstimate) {
+	if estimate == nil || estimate.Source != agent.TokenSourceActual || estimate.Actual == nil {
+		return
+	}
+
+	agentTokenUsage := estimate.Actual
+	if agentTokenUsage.InputTokens > 0 || agentTokenUsage.OutputTokens > 0 {
+		fmt.Printf("  Agent Tokens: %d (in=%d, out=%d)", agentTokenUsage.TotalTokens, agentTokenUsage.InputTokens, agentTokenUsage.OutputTokens)
+		fmt.Println()
+	}
+}
+
+func printJudgeTokenUsage(judgeTokenUsage *agent.ActualUsage) {
+	if judgeTokenUsage != nil && (judgeTokenUsage.InputTokens > 0 || judgeTokenUsage.OutputTokens > 0) {
+		fmt.Printf("  Judge Tokens: %d (in=%d, out=%d)", judgeTokenUsage.TotalTokens, judgeTokenUsage.InputTokens, judgeTokenUsage.OutputTokens)
+		fmt.Println()
+	}
 }
 
 // printAssertions prints assertion counts and any failing assertion reasons.

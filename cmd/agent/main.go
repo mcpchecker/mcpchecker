@@ -88,7 +88,7 @@ func runAgent(cmd *cobra.Command, args []string) error {
 	return runLegacy(ctx, agentInstance, prompt)
 }
 
-func runLegacy(ctx context.Context, agent openaiagent.Agent, prompt string) error {
+func runLegacy(ctx context.Context, agent *openaiagent.AIAgent, prompt string) error {
 	result, err := agent.Run(ctx, prompt)
 	if err != nil {
 		return fmt.Errorf("agent execution failed: %w", err)

@@ -6,6 +6,7 @@ import (
 
 	"github.com/mcpchecker/mcpchecker/pkg/mcpproxy"
 	"github.com/mcpchecker/mcpchecker/pkg/openaiagent"
+	"github.com/mcpchecker/mcpchecker/pkg/usage"
 )
 
 // openAIAgentRunner implements Runner for OpenAI agents using the openaiagent package
@@ -14,10 +15,12 @@ type openAIAgentRunner struct {
 	baseURL string
 	apiKey  string
 	mcpInfo McpServerInfo
+	usage   *usage.TokenUsage
 }
 
 type openAIAgentResult struct {
 	output string
+	usage  *usage.TokenUsage
 }
 
 func (r *openAIAgentResult) GetOutput() string {
@@ -40,8 +43,12 @@ func (r *openAIAgentResult) GetRawUpdates() any {
 	return nil // OpenAI agent doesn't have session updates
 }
 
+// GetTokenEstimate returns token estimate with only actual usage provided.
 func (r *openAIAgentResult) GetTokenEstimate() TokenEstimate {
-	return TokenEstimate{Error: "token estimation not supported for openai-agent runner"}
+	return TokenEstimate{
+		Actual: GetActualUsageFromTokenUsage(r.usage),
+		Source: TokenSourceActual,
+	}
 }
 
 // NewOpenAIAgentRunner creates a runner that uses the openaiagent package directly
@@ -63,6 +70,7 @@ func (r *openAIAgentRunner) WithMcpServerInfo(mcpServers mcpproxy.ServerManager)
 		baseURL: r.baseURL,
 		apiKey:  r.apiKey,
 		mcpInfo: mcpServers,
+		usage:   r.usage,
 	}
 }
 
@@ -99,7 +107,11 @@ func (r *openAIAgentRunner) RunTask(ctx context.Context, prompt string) (AgentRe
 		return nil, fmt.Errorf("failed to run agent: %w", err)
 	}
 
+	// Store usage from this run
+	r.usage = agent.GetUsage()
+
 	return &openAIAgentResult{
 		output: result,
+		usage:  r.usage,
 	}, nil
 }

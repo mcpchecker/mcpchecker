@@ -8,6 +8,8 @@ import (
 
 	"github.com/openai/openai-go/v2"
 	"github.com/openai/openai-go/v2/option"
+
+	"github.com/mcpchecker/mcpchecker/pkg/usage"
 )
 
 const (
@@ -51,9 +53,10 @@ type LLMJudge interface {
 }
 
 type LLMJudgeResult struct {
-	Passed          bool   `json:"passed"`
-	Reason          string `json:"reason"`
-	FailureCategory string `json:"failureCategory"`
+	Passed          bool              `json:"passed"`
+	Reason          string            `json:"reason"`
+	FailureCategory string            `json:"failureCategory"`
+	Usage           *usage.TokenUsage `json:"usage,omitempty"`
 }
 
 type llmJudge struct {
@@ -191,6 +194,8 @@ func (j *llmJudge) EvaluateText(ctx context.Context, judgeConfig *LLMJudgeStepCo
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshall '%s' tool call arguments: %w", submitJudgementFunction.Name, err)
 	}
+
+	result.Usage = usage.FromOpenAIUsage(completion.Usage)
 
 	return result, nil
 }

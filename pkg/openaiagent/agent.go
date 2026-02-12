@@ -8,11 +8,9 @@ import (
 	"github.com/openai/openai-go/v2"
 	"github.com/openai/openai-go/v2/option"
 	"github.com/openai/openai-go/v2/shared"
-)
 
-type Agent interface {
-	Run(ctx context.Context, prompt string) (string, error)
-}
+	"github.com/mcpchecker/mcpchecker/pkg/usage"
+)
 
 // AIAgent is an AI agent that connects to MCP servers and uses an OpenAI-compatible API.
 type AIAgent struct {
@@ -20,6 +18,7 @@ type AIAgent struct {
 	mcpClients   []*McpClient
 	model        shared.ChatModel
 	systemPrompt string
+	usage        *usage.TokenUsage
 }
 
 type runOpts struct {
@@ -46,6 +45,7 @@ func NewAIAgent(url, apiKey, model, systemPrompt string) (*AIAgent, error) {
 		mcpClients:   make([]*McpClient, 0),
 		model:        shared.ChatModel(model),
 		systemPrompt: systemPrompt,
+		usage:        &usage.TokenUsage{},
 	}, nil
 }
 
@@ -71,6 +71,9 @@ func (a *AIAgent) Run(ctx context.Context, prompt string) (string, error) {
 }
 
 func (a *AIAgent) runTask(ctx context.Context, opts runOpts) (string, error) {
+	// Initialize usage tracker for this run
+	a.usage = &usage.TokenUsage{}
+
 	// Start conversation with system prompt (if provided) and user's prompt
 	var messages []openai.ChatCompletionMessageParamUnion
 
@@ -107,6 +110,10 @@ func (a *AIAgent) runTask(ctx context.Context, opts runOpts) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("failed to create chat completion: %w", err)
 		}
+
+		// Capture usage from this API call
+		tokenUsage := usage.FromOpenAIUsage(completion.Usage)
+		a.usage.Add(tokenUsage)
 
 		if len(completion.Choices) == 0 {
 			return "", fmt.Errorf("no completion choices returned")
@@ -186,6 +193,11 @@ func (a *AIAgent) callToolOnClients(ctx context.Context, clients []*McpClient, t
 	}
 
 	return "", fmt.Errorf("tool %s not found in any MCP client", toolName)
+}
+
+// GetUsage returns aggregated token usage from the most recent Run call
+func (a *AIAgent) GetUsage() *usage.TokenUsage {
+	return a.usage
 }
 
 // Close closes the agent and any associated resources

@@ -155,6 +155,7 @@ func (s *LLMJudgeStep) Execute(ctx context.Context, input *StepInput) (*StepOutp
 		Type:    "llmJudge",
 		Success: res.Passed,
 		Message: res.Reason,
+		Usage:   res.Usage,
 	}
 
 	if !res.Passed {
