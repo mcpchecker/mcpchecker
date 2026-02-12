@@ -14,6 +14,7 @@ import (
 	"github.com/coder/acp-go-sdk"
 	"github.com/mcpchecker/mcpchecker/pkg/mcpproxy"
 	"github.com/mcpchecker/mcpchecker/pkg/tokenizer"
+	"github.com/mcpchecker/mcpchecker/pkg/usage"
 )
 
 // TokenSource indicates where token counts came from.
@@ -52,6 +53,19 @@ type ActualUsage struct {
 	ThoughtTokens     *int64 `json:"thoughtTokens,omitempty"`
 	CachedReadTokens  *int64 `json:"cachedReadTokens,omitempty"`
 	CachedWriteTokens *int64 `json:"cachedWriteTokens,omitempty"`
+}
+
+// GetActualUsageFromTokenUsage converts token usage from internal struct to agent actual usage.
+func GetActualUsageFromTokenUsage(tokenUsage *usage.TokenUsage) *ActualUsage {
+	if tokenUsage == nil {
+		return nil
+	}
+
+	return &ActualUsage{
+		InputTokens:  int64(tokenUsage.GetInput()),
+		OutputTokens: int64(tokenUsage.GetOutput()),
+		TotalTokens:  int64(tokenUsage.GetInput() + tokenUsage.GetOutput()),
+	}
 }
 
 // TokenEstimate provides token count estimates for different components.

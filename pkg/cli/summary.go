@@ -12,25 +12,33 @@ import (
 )
 
 type SummaryOutput struct {
-	ResultsFile         string        `json:"resultsFile"`
-	Tasks               []TaskSummary `json:"tasks"`
-	TasksTotal          int           `json:"tasksTotal"`
-	TasksPassed         int           `json:"tasksPassed"`
-	TaskPassRate        float64       `json:"taskPassRate"`
-	AssertionsTotal     int           `json:"assertionsTotal"`
-	AssertionsPassed    int           `json:"assertionsPassed"`
-	AssertionPassRate   float64       `json:"assertionPassRate"`
-	TotalTokensEstimate int64         `json:"totalTokensEstimate"`
+	ResultsFile            string        `json:"resultsFile"`
+	Tasks                  []TaskSummary `json:"tasks"`
+	TasksTotal             int           `json:"tasksTotal"`
+	TasksPassed            int           `json:"tasksPassed"`
+	TaskPassRate           float64       `json:"taskPassRate"`
+	AssertionsTotal        int           `json:"assertionsTotal"`
+	AssertionsPassed       int           `json:"assertionsPassed"`
+	AssertionPassRate      float64       `json:"assertionPassRate"`
+	TotalTokensEstimate    int64         `json:"totalTokensEstimate"`
+	AgentTotalInputTokens  int64         `json:"agentTotalInputTokens"`
+	AgentTotalOutputTokens int64         `json:"agentTotalOutputTokens"`
+	JudgeTotalInputTokens  int64         `json:"judgeTotalInputTokens"`
+	JudgeTotalOutputTokens int64         `json:"judgeTotalOutputTokens"`
 }
 
 type TaskSummary struct {
-	Name             string   `json:"name"`
-	TaskPassed       bool     `json:"taskPassed"`
-	AssertionsPassed bool     `json:"assertionsPassed"`
-	TaskError        string   `json:"taskError,omitempty"`
-	FailedAssertions []string `json:"failedAssertions,omitempty"`
-	TokensEstimated  int64    `json:"tokensEstimated,omitempty"`
-	TokenError       string   `json:"tokenError,omitempty"`
+	Name              string   `json:"name"`
+	TaskPassed        bool     `json:"taskPassed"`
+	AssertionsPassed  bool     `json:"assertionsPassed"`
+	TaskError         string   `json:"taskError,omitempty"`
+	FailedAssertions  []string `json:"failedAssertions,omitempty"`
+	TokensEstimated   int64    `json:"tokensEstimated,omitempty"`
+	TokenError        string   `json:"tokenError,omitempty"`
+	AgentInputTokens  int64    `json:"agentInputTokens"`
+	AgentOutputTokens int64    `json:"agentOutputTokens"`
+	JudgeInputTokens  int64    `json:"judgeInputTokens"`
+	JudgeOutputTokens int64    `json:"judgeOutputTokens"`
 }
 
 func NewSummaryCmd() *cobra.Command {
@@ -132,6 +140,24 @@ func buildSummaryOutput(resultsFile string, evalResults []*eval.EvalResult) Summ
 			summary.TotalTokensEstimate += result.TokenEstimate.TotalTokens
 		}
 
+		// Collect actual token usage
+		if result.TokenEstimate != nil && result.TokenEstimate.Actual != nil {
+			actualTokenUsage := result.TokenEstimate.Actual
+
+			taskSummary.AgentInputTokens = actualTokenUsage.InputTokens
+			taskSummary.AgentOutputTokens = actualTokenUsage.OutputTokens
+			summary.AgentTotalInputTokens += actualTokenUsage.InputTokens
+			summary.AgentTotalOutputTokens += actualTokenUsage.OutputTokens
+		}
+
+		// Collect judge token usage
+		if result.JudgeTokenUsage != nil {
+			taskSummary.JudgeInputTokens = result.JudgeTokenUsage.InputTokens
+			taskSummary.JudgeOutputTokens = result.JudgeTokenUsage.OutputTokens
+			summary.JudgeTotalInputTokens += result.JudgeTokenUsage.InputTokens
+			summary.JudgeTotalOutputTokens += result.JudgeTokenUsage.OutputTokens
+		}
+
 		summary.Tasks = append(summary.Tasks, taskSummary)
 	}
 
@@ -210,10 +236,22 @@ func outputTextSummary(evalResults []*eval.EvalResult, summary SummaryOutput) {
 			}
 		}
 		if hasTokenErrors {
-			fmt.Printf("Tokens:     ~%d (incomplete - some counts failed)\n", summary.TotalTokensEstimate)
+			fmt.Printf("Estimated Tokens: ~%d (incomplete - some counts failed)\n", summary.TotalTokensEstimate)
 		} else {
-			fmt.Printf("Tokens:     ~%d (estimate - excludes system prompt & cache)\n", summary.TotalTokensEstimate)
+			fmt.Printf("Estimated Tokens: ~%d (estimate - excludes system prompt & cache)\n", summary.TotalTokensEstimate)
 		}
+	}
+
+	if summary.AgentTotalInputTokens > 0 || summary.AgentTotalOutputTokens > 0 {
+		fmt.Printf("Agent used tokens:\n")
+		fmt.Printf("  Input:  %d tokens\n", summary.AgentTotalInputTokens)
+		fmt.Printf("  Output: %d tokens\n", summary.AgentTotalOutputTokens)
+	}
+
+	if summary.JudgeTotalInputTokens > 0 || summary.JudgeTotalOutputTokens > 0 {
+		fmt.Printf("Judge used tokens:\n")
+		fmt.Printf("  Input:  %d tokens\n", summary.JudgeTotalInputTokens)
+		fmt.Printf("  Output: %d tokens\n", summary.JudgeTotalOutputTokens)
 	}
 }
 
