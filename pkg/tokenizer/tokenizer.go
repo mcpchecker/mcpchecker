@@ -12,7 +12,7 @@ import (
 type tokenizer struct {
 	enc     *tiktoken.Tiktoken
 	initErr error
-	mu      sync.Mutex
+	mu      sync.RWMutex
 }
 
 // Tokenizer is the public interface for token counting.
@@ -49,13 +49,26 @@ func (t *tokenizer) initLocked() error {
 
 // CountTokens counts tokens in the given text.
 func (t *tokenizer) CountTokens(text string) (int, error) {
+	// Fast path: read lock if already initialized
+	t.mu.RLock()
+	if t.enc != nil {
+		tokens := t.enc.Encode(text, nil, nil)
+		t.mu.RUnlock()
+		return len(tokens), nil
+	}
+	if t.initErr != nil {
+		err := t.initErr
+		t.mu.RUnlock()
+		return 0, err
+	}
+	t.mu.RUnlock()
+
+	// Slow path: write lock for initialization
 	t.mu.Lock()
 	defer t.mu.Unlock()
-
 	if err := t.initLocked(); err != nil {
 		return 0, err
 	}
-
 	tokens := t.enc.Encode(text, nil, nil)
 	return len(tokens), nil
 }

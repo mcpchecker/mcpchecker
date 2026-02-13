@@ -118,7 +118,7 @@ func TestAcpRunnerResult_GetOutput(t *testing.T) {
 
 	for tn, tc := range tt {
 		t.Run(tn, func(t *testing.T) {
-			result := &acpRunnerResult{
+			result := &acpResult{
 				updates: tc.updates,
 			}
 
@@ -132,7 +132,7 @@ func TestAcpRunnerResult_GetOutput(t *testing.T) {
 
 func TestAcpRunnerResult_GetOutput_WithAgentMessageChunk(t *testing.T) {
 	// Test that updates with AgentMessageChunk marshal correctly
-	result := &acpRunnerResult{
+	result := &acpResult{
 		updates: []acp.SessionUpdate{
 			acp.UpdateAgentMessageText("Final message"),
 		},
