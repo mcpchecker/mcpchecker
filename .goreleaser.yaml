@@ -21,6 +21,8 @@ builds:
       - -trimpath
     ldflags:
       - -s -w
+      - -X github.com/mcpchecker/mcpchecker/pkg/cli.Version=v{{.Version}}
+      - -X github.com/mcpchecker/mcpchecker/pkg/cli.Commit={{.ShortCommit}}
 
   - id: agent
     main: ./cmd/agent

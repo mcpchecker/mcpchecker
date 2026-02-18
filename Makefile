@@ -2,6 +2,10 @@ AGENT_BINARY_NAME = agent
 MCPCHECKER_BINARY_NAME = mcpchecker
 MOCK_AGENT_BINARY_NAME = functional/mock-agent
 
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "development")
+COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "")
+LDFLAGS = -X github.com/mcpchecker/mcpchecker/pkg/cli.Version=$(VERSION) -X github.com/mcpchecker/mcpchecker/pkg/cli.Commit=$(COMMIT)
+
 .PHONY: clean
 clean:
 	rm -f $(AGENT_BINARY_NAME) $(MCPCHECKER_BINARY_NAME) $(MOCK_AGENT_BINARY_NAME)
@@ -13,7 +17,7 @@ build-agent: clean
 
 .PHONY: build-mcpchecker
 build-mcpchecker: clean
-	go build -o $(MCPCHECKER_BINARY_NAME) ./cmd/mcpchecker/
+	go build -ldflags "$(LDFLAGS)" -o $(MCPCHECKER_BINARY_NAME) ./cmd/mcpchecker/
 
 .PHONY: build
 build: build-agent build-mcpchecker
