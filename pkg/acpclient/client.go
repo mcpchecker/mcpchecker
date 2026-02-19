@@ -10,8 +10,8 @@ import (
 	"sync"
 
 	"github.com/coder/acp-go-sdk"
-	"github.com/mcpchecker/mcpchecker/pkg/mcpproxy"
 	"github.com/mcpchecker/mcpchecker/pkg/mcpclient"
+	"github.com/mcpchecker/mcpchecker/pkg/mcpproxy"
 )
 
 // RunResult contains the results of running a prompt, including session updates
