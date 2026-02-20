@@ -7,7 +7,7 @@ require (
 	github.com/fatih/color v1.18.0
 	github.com/genmcp/gen-mcp v0.2.3
 	github.com/google/jsonschema-go v0.4.2
-	github.com/modelcontextprotocol/go-sdk v1.3.0
+	github.com/modelcontextprotocol/go-sdk v1.3.1
 	github.com/openai/openai-go/v2 v2.7.1
 	github.com/pkoukk/tiktoken-go v0.1.8
 	github.com/spf13/cobra v1.10.2
@@ -70,6 +70,8 @@ require (
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/secure-systems-lab/go-securesystemslib v0.10.0 // indirect
+	github.com/segmentio/asm v1.2.1 // indirect
+	github.com/segmentio/encoding v0.5.3 // indirect
 	github.com/shibumi/go-pathspec v1.3.0 // indirect
 	github.com/sigstore/protobuf-specs v0.5.0 // indirect
 	github.com/sigstore/rekor v1.4.3 // indirect
