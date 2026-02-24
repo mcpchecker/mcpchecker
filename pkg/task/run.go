@@ -15,10 +15,10 @@ import (
 
 // AgentDetails captures structured information from the agent execution.
 type AgentDetails struct {
-	TokenEstimate *agent.TokenEstimate  `json:"tokenEstimate,omitempty"`
+	TokenEstimate *agent.TokenEstimate    `json:"tokenEstimate,omitempty"`
 	ToolCalls     []agent.ToolCallSummary `json:"toolCalls,omitempty"`
-	FinalMessage  string                `json:"finalMessage,omitempty"`
-	Thinking      string                `json:"thinking,omitempty"`
+	FinalMessage  string                  `json:"finalMessage,omitempty"`
+	Thinking      string                  `json:"thinking,omitempty"`
 }
 
 // PhaseOutput represents the output from a task phase (setup, agent, verify, or cleanup).
@@ -55,6 +55,7 @@ type taskRunner struct {
 	baseDir string
 
 	setupOutputs map[string]map[string]string
+	random       *steps.RandomResolver
 }
 
 func NewTaskRunner(ctx context.Context, cfg *TaskConfig) (TaskRunner, error) {
@@ -68,6 +69,7 @@ func NewTaskRunner(ctx context.Context, cfg *TaskConfig) (TaskRunner, error) {
 		verify:  make([]steps.StepRunner, len(cfg.Spec.Verify)),
 		cleanup: make([]steps.StepRunner, len(cfg.Spec.Cleanup)),
 		baseDir: cfg.basePath,
+		random:  steps.NewRandomResolver(),
 	}
 
 	extensionManager, ok := client.ManagerFromContext(ctx)
@@ -199,6 +201,7 @@ func (r *taskRunner) Setup(ctx context.Context) (*PhaseOutput, error) {
 		res, err := s.Execute(ctx, &steps.StepInput{
 			Workdir:     r.baseDir,
 			StepOutputs: stepOutputs,
+			Random:      r.random,
 		})
 
 		out.Steps = append(out.Steps, res)
@@ -239,6 +242,7 @@ func (r *taskRunner) Cleanup(ctx context.Context) (*PhaseOutput, error) {
 		res, err := s.Execute(ctx, &steps.StepInput{
 			Workdir:     r.baseDir,
 			StepOutputs: stepOutputs,
+			Random:      r.random,
 		})
 
 		out.Steps = append(out.Steps, res)
@@ -361,6 +365,7 @@ func (r *taskRunner) Verify(ctx context.Context) (*PhaseOutput, error) {
 			},
 			Workdir:     r.baseDir,
 			StepOutputs: stepOutputs,
+			Random:      r.random,
 		})
 
 		out.Steps = append(out.Steps, res)

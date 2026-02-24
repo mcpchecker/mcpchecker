@@ -73,7 +73,12 @@ func NewHttpStep(cfg *HttpStepConfig) (*HttpStep, error) {
 	var err error
 	step := &HttpStep{}
 
-	url, err := template.ParseTemplate(cfg.URL, template.TemplateParserOptions{})
+	sources := map[string]template.SourceFactory{
+		"random": template.NewSourceFactory("random"),
+	}
+	parseOpts := template.TemplateParserOptions{Sources: sources}
+
+	url, err := template.ParseTemplate(cfg.URL, parseOpts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse url: %w", err)
 	}
@@ -83,7 +88,7 @@ func NewHttpStep(cfg *HttpStepConfig) (*HttpStep, error) {
 		return nil, fmt.Errorf("failed to create builder for url: %w", err)
 	}
 
-	method, err := template.ParseTemplate(cfg.Method, template.TemplateParserOptions{})
+	method, err := template.ParseTemplate(cfg.Method, parseOpts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse method: %w", err)
 	}
@@ -95,7 +100,7 @@ func NewHttpStep(cfg *HttpStepConfig) (*HttpStep, error) {
 
 	step.Headers = make(map[string]*template.TemplateBuilder, len(cfg.Headers))
 	for k, v := range cfg.Headers {
-		h, err := template.ParseTemplate(v, template.TemplateParserOptions{})
+		h, err := template.ParseTemplate(v, parseOpts)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse header: %w", err)
 		}
@@ -127,6 +132,14 @@ func NewHttpStep(cfg *HttpStepConfig) (*HttpStep, error) {
 }
 
 func (s *HttpStep) Execute(ctx context.Context, input *StepInput) (*StepOutput, error) {
+	if input.Random != nil {
+		s.URL.SetSourceResolver("random", input.Random)
+		s.Method.SetSourceResolver("random", input.Random)
+		for _, h := range s.Headers {
+			h.SetSourceResolver("random", input.Random)
+		}
+	}
+
 	for k, v := range input.Env {
 		err := os.Setenv(k, v)
 		if err != nil {

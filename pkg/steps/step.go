@@ -26,6 +26,7 @@ type StepInput struct {
 	Workdir     string
 	Agent       *AgentContext
 	StepOutputs map[string]map[string]string // Maps step type to its outputs
+	Random      *RandomResolver              // Memoized random value generator
 }
 
 type StepOutput struct {
