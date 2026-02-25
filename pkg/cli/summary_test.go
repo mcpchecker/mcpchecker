@@ -2,8 +2,11 @@ package cli
 
 import (
 	"bytes"
+	"os"
+	"strings"
 	"testing"
 
+	"github.com/mcpchecker/mcpchecker/pkg/agent"
 	"github.com/mcpchecker/mcpchecker/pkg/eval"
 )
 
@@ -185,4 +188,128 @@ func TestOutputTextSummaryAgentExecutionError(t *testing.T) {
 
 	// Just ensure it doesn't panic
 	outputTextSummary(results, summary)
+}
+
+func TestBuildSummaryOutputWithTokenUsage(t *testing.T) {
+	results := []*eval.EvalResult{
+		{
+			TaskName:            "task-1",
+			TaskPassed:          true,
+			AllAssertionsPassed: true,
+			TokenEstimate: &agent.TokenEstimate{
+				TotalTokens: 1000,
+				Actual: &agent.ActualUsage{
+					InputTokens:  600,
+					OutputTokens: 400,
+				},
+			},
+			JudgeTokenUsage: &agent.ActualUsage{
+				InputTokens:  200,
+				OutputTokens: 100,
+			},
+		},
+		{
+			TaskName:            "task-2",
+			TaskPassed:          true,
+			AllAssertionsPassed: true,
+			TokenEstimate: &agent.TokenEstimate{
+				TotalTokens: 500,
+				Actual: &agent.ActualUsage{
+					InputTokens:  300,
+					OutputTokens: 200,
+				},
+			},
+			JudgeTokenUsage: &agent.ActualUsage{
+				InputTokens:  150,
+				OutputTokens: 50,
+			},
+		},
+	}
+
+	summary := buildSummaryOutput("test.json", results)
+
+	if summary.TotalTokensEstimate != 1500 {
+		t.Errorf("TotalTokensEstimate = %d, want 1500", summary.TotalTokensEstimate)
+	}
+	if summary.AgentTotalInputTokens != 900 {
+		t.Errorf("AgentTotalInputTokens = %d, want 900", summary.AgentTotalInputTokens)
+	}
+	if summary.AgentTotalOutputTokens != 600 {
+		t.Errorf("AgentTotalOutputTokens = %d, want 600", summary.AgentTotalOutputTokens)
+	}
+	if summary.JudgeTotalInputTokens != 350 {
+		t.Errorf("JudgeTotalInputTokens = %d, want 350", summary.JudgeTotalInputTokens)
+	}
+	if summary.JudgeTotalOutputTokens != 150 {
+		t.Errorf("JudgeTotalOutputTokens = %d, want 150", summary.JudgeTotalOutputTokens)
+	}
+
+	// Check per-task values
+	if summary.Tasks[0].AgentInputTokens != 600 {
+		t.Errorf("Tasks[0].AgentInputTokens = %d, want 600", summary.Tasks[0].AgentInputTokens)
+	}
+	if summary.Tasks[1].JudgeOutputTokens != 50 {
+		t.Errorf("Tasks[1].JudgeOutputTokens = %d, want 50", summary.Tasks[1].JudgeOutputTokens)
+	}
+}
+
+func TestOutputGitHubSummaryContent(t *testing.T) {
+	results := []*eval.EvalResult{
+		{
+			TaskName:            "task-1",
+			TaskPassed:          true,
+			AllAssertionsPassed: true,
+			AssertionResults: &eval.CompositeAssertionResult{
+				ToolsUsed: &eval.SingleAssertionResult{Passed: true},
+			},
+			TokenEstimate: &agent.TokenEstimate{
+				TotalTokens: 1000,
+				Actual: &agent.ActualUsage{
+					InputTokens:  600,
+					OutputTokens: 400,
+				},
+			},
+			JudgeTokenUsage: &agent.ActualUsage{
+				InputTokens:  200,
+				OutputTokens: 100,
+			},
+		},
+	}
+
+	summary := buildSummaryOutput("test.json", results)
+
+	// Capture stdout
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	outputGitHubSummary(summary)
+
+	w.Close()
+	os.Stdout = oldStdout
+
+	var buf bytes.Buffer
+	buf.ReadFrom(r)
+	output := buf.String()
+
+	expectedLines := []string{
+		"results-file=test.json",
+		"tasks-total=1",
+		"tasks-passed=1",
+		"task-pass-rate=1.0000",
+		"assertions-total=1",
+		"assertions-passed=1",
+		"assertion-pass-rate=1.0000",
+		"tokens-estimated=1000",
+		"agent-input-tokens=600",
+		"agent-output-tokens=400",
+		"judge-input-tokens=200",
+		"judge-output-tokens=100",
+	}
+
+	for _, expected := range expectedLines {
+		if !strings.Contains(output, expected) {
+			t.Errorf("output missing expected line %q\nGot:\n%s", expected, output)
+		}
+	}
 }

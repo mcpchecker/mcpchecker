@@ -270,4 +270,8 @@ func outputGitHubSummary(summary SummaryOutput) {
 	fmt.Printf("assertions-passed=%d\n", summary.AssertionsPassed)
 	fmt.Printf("assertion-pass-rate=%.4f\n", summary.AssertionPassRate)
 	fmt.Printf("tokens-estimated=%d\n", summary.TotalTokensEstimate)
+	fmt.Printf("agent-input-tokens=%d\n", summary.AgentTotalInputTokens)
+	fmt.Printf("agent-output-tokens=%d\n", summary.AgentTotalOutputTokens)
+	fmt.Printf("judge-input-tokens=%d\n", summary.JudgeTotalInputTokens)
+	fmt.Printf("judge-output-tokens=%d\n", summary.JudgeTotalOutputTokens)
 }

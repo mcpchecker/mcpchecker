@@ -1,8 +1,11 @@
 package cli
 
 import (
+	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/mcpchecker/mcpchecker/pkg/mcpproxy"
 )
 
 func TestSummarizeTaskOutput(t *testing.T) {
@@ -137,6 +140,121 @@ func TestTruncateString(t *testing.T) {
 			got := truncateString(tt.input, tt.max)
 			if got != tt.want {
 				t.Errorf("truncateString(%q, %d) = %q, want %q", tt.input, tt.max, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestViewCommand(t *testing.T) {
+	results := sampleResults()
+	filePath := createTestResultsFile(t, results)
+
+	cmd := NewViewCmd()
+	cmd.SetArgs([]string{filePath})
+
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("view command failed: %v", err)
+	}
+}
+
+func TestViewCommandWithTaskFilter(t *testing.T) {
+	results := sampleResults()
+	filePath := createTestResultsFile(t, results)
+
+	cmd := NewViewCmd()
+	cmd.SetArgs([]string{filePath, "--task", "task-1"})
+
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("view command with --task filter failed: %v", err)
+	}
+}
+
+func TestViewCommandFileNotFound(t *testing.T) {
+	cmd := NewViewCmd()
+	cmd.SetArgs([]string{"/nonexistent/path/results.json"})
+
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Error("view command should fail with nonexistent file")
+	}
+}
+
+func TestViewCommandNoTaskFilter(t *testing.T) {
+	results := sampleResults()
+	filePath := createTestResultsFile(t, results)
+
+	cmd := NewViewCmd()
+	cmd.SetArgs([]string{filePath, "--task", "nonexistent-task"})
+
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Error("view command should fail when no tasks match filter")
+	}
+}
+
+func TestSummarizeToolCalls(t *testing.T) {
+	tests := []struct {
+		name  string
+		calls []*mcpproxy.ToolCall
+		want  string
+	}{
+		{
+			name:  "empty calls",
+			calls: nil,
+			want:  "",
+		},
+		{
+			name: "single success",
+			calls: []*mcpproxy.ToolCall{
+				{CallRecord: mcpproxy.CallRecord{ServerName: "server1", Success: true}, ToolName: "tool1"},
+			},
+			want: "server1:1 ok",
+		},
+		{
+			name: "single failure",
+			calls: []*mcpproxy.ToolCall{
+				{CallRecord: mcpproxy.CallRecord{ServerName: "server1", Success: false}, ToolName: "tool1"},
+			},
+			want: "server1:1 fail",
+		},
+		{
+			name: "mixed success and failure same server",
+			calls: []*mcpproxy.ToolCall{
+				{CallRecord: mcpproxy.CallRecord{ServerName: "server1", Success: true}, ToolName: "tool1"},
+				{CallRecord: mcpproxy.CallRecord{ServerName: "server1", Success: true}, ToolName: "tool2"},
+				{CallRecord: mcpproxy.CallRecord{ServerName: "server1", Success: false}, ToolName: "tool3"},
+			},
+			want: "server1:2 ok, server1:1 fail",
+		},
+		{
+			name: "multiple servers",
+			calls: []*mcpproxy.ToolCall{
+				{CallRecord: mcpproxy.CallRecord{ServerName: "alpha", Success: true}, ToolName: "tool1"},
+				{CallRecord: mcpproxy.CallRecord{ServerName: "beta", Success: true}, ToolName: "tool1"},
+			},
+			want: "alpha:1 ok, beta:1 ok",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := summarizeToolCalls(tt.calls)
+			if got != tt.want {
+				t.Errorf("summarizeToolCalls() = %q, want %q", got, tt.want)
 			}
 		})
 	}
