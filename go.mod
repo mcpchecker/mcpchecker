@@ -7,7 +7,7 @@ require (
 	github.com/fatih/color v1.18.0
 	github.com/genmcp/gen-mcp v0.2.3
 	github.com/google/jsonschema-go v0.4.2
-	github.com/modelcontextprotocol/go-sdk v1.3.1
+	github.com/modelcontextprotocol/go-sdk v1.4.0
 	github.com/openai/openai-go/v2 v2.7.1
 	github.com/pkoukk/tiktoken-go v0.1.8
 	github.com/spf13/cobra v1.10.2
