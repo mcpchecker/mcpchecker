@@ -2,6 +2,7 @@ kind: Task
 metadata:
   name: fix-rbac-wrong-resource
   difficulty: easy
+  parallel: true
 steps:
   setup:
     file: setup.sh

@@ -30,6 +30,7 @@ type TaskMetadata struct {
 	Name       string            `json:"name"`
 	Difficulty string            `json:"difficulty"`
 	Labels     map[string]string `json:"labels,omitempty"`
+	Parallel   bool              `json:"parallel,omitempty"`
 }
 
 type TaskSpec struct {

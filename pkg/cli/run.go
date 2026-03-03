@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/fatih/color"
 	"github.com/mcpchecker/mcpchecker/pkg/eval"
@@ -20,6 +21,7 @@ func NewEvalCmd() *cobra.Command {
 	var verbose bool
 	var run string
 	var labelSelector string
+	var parallelWorkers int
 
 	cmd := &cobra.Command{
 		Use:   "check [eval-config-file]",
@@ -27,6 +29,7 @@ func NewEvalCmd() *cobra.Command {
 		Long:  `Run an evaluation using the specified eval configuration file.`,
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			startTime := time.Now()
 			configFile := args[0]
 
 			// Load eval spec
@@ -43,7 +46,9 @@ func NewEvalCmd() *cobra.Command {
 			}
 
 			// Create runner
-			runner, err := eval.NewRunner(spec)
+			runner, err := eval.NewRunner(spec, eval.RunnerOptions{
+				ParallelWorkers: parallelWorkers,
+			})
 			if err != nil {
 				return fmt.Errorf("failed to create eval runner: %w", err)
 			}
@@ -71,6 +76,10 @@ func NewEvalCmd() *cobra.Command {
 				return fmt.Errorf("failed to display results: %w", err)
 			}
 
+			// Print elapsed time
+			elapsed := time.Since(startTime)
+			fmt.Printf("⏱️  Completed in %s\n", formatDuration(elapsed))
+
 			return nil
 		},
 	}
@@ -79,6 +88,7 @@ func NewEvalCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Verbose output")
 	cmd.Flags().StringVarP(&run, "run", "r", "", "Regular expression to match task names to run (unanchored, like go test -run)")
 	cmd.Flags().StringVarP(&labelSelector, "label-selector", "l", "", "Filter taskSets by label (format: key=value, e.g., suite=kubernetes)")
+	cmd.Flags().IntVarP(&parallelWorkers, "parallel", "p", 1, "Number of parallel workers for tasks marked as parallel (1 = sequential)")
 
 	return cmd
 }
@@ -111,7 +121,11 @@ func (d *progressDisplay) handleProgress(event eval.ProgressEvent) {
 
 	case eval.EventTaskStart:
 		fmt.Println()
-		d.cyan.Printf("Task: %s\n", event.Task.TaskName)
+		if event.Task.Parallel {
+			d.cyan.Printf("Task: %s [parallel]\n", event.Task.TaskName)
+		} else {
+			d.cyan.Printf("Task: %s\n", event.Task.TaskName)
+		}
 		if event.Task.Difficulty != "" {
 			fmt.Printf("  Difficulty: %s\n", event.Task.Difficulty)
 		}
@@ -480,4 +494,22 @@ func saveErrorToFile(taskName, taskError, taskOutput string) (string, error) {
 	}
 
 	return absPath, nil
+}
+
+// formatDuration formats a duration in a human-readable way
+func formatDuration(d time.Duration) string {
+	if d < time.Second {
+		return fmt.Sprintf("%dms", d.Milliseconds())
+	}
+	if d < time.Minute {
+		return fmt.Sprintf("%.1fs", d.Seconds())
+	}
+	minutes := int(d.Minutes())
+	seconds := int(d.Seconds()) % 60
+	if minutes < 60 {
+		return fmt.Sprintf("%dm%ds", minutes, seconds)
+	}
+	hours := minutes / 60
+	minutes = minutes % 60
+	return fmt.Sprintf("%dh%dm%ds", hours, minutes, seconds)
 }

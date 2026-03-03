@@ -2,6 +2,7 @@ kind: Task
 metadata:
   name: fix-service-routing
   difficulty: medium
+  parallel: true
 steps:
   setup:
     file: setup.sh

@@ -2,6 +2,7 @@ kind: Task
 metadata:
   name: fix-pending-pod
   difficulty: easy
+  parallel: true
 steps:
   setup:
     file: setup.sh

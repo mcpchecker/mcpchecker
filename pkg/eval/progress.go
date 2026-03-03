@@ -1,6 +1,8 @@
 package eval
 
-// ProgressCallback is called during eval execution to report progress
+// ProgressCallback is called during eval execution to report progress.
+// Implementations must be safe for concurrent use when running with --parallel > 1,
+// as callbacks may be invoked from multiple goroutines simultaneously.
 type ProgressCallback func(event ProgressEvent)
 
 // ProgressEvent represents a progress update during eval execution

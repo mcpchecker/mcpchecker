@@ -2,6 +2,7 @@ kind: Task
 metadata:
   name: resize-pvc
   difficulty: easy
+  parallel: true
 steps:
   setup:
     file: setup.sh

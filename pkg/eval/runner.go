@@ -7,8 +7,10 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/mcpchecker/mcpchecker/pkg/agent"
+	"golang.org/x/sync/errgroup"
 	"github.com/mcpchecker/mcpchecker/pkg/extension/client"
 	"github.com/mcpchecker/mcpchecker/pkg/extension/resolver"
 	"github.com/mcpchecker/mcpchecker/pkg/llmjudge"
@@ -29,6 +31,7 @@ type EvalResult struct {
 	TaskJudgeError      string                    `json:"taskJudgeError,omitempty"`
 	AgentExecutionError bool                      `json:"agentExecutionError,omitempty"` // True if agent failed to execute
 	Difficulty          string                    `json:"difficulty"`
+	Parallel            bool                      `json:"parallel,omitempty"`
 	AssertionResults    *CompositeAssertionResult `json:"assertionResults"`
 	AllAssertionsPassed bool                      `json:"allAssertionsPassed"`
 	CallHistory         *mcpproxy.CallHistory     `json:"callHistory"`
@@ -52,9 +55,15 @@ type EvalRunner interface {
 	RunWithProgress(ctx context.Context, taskPattern string, callback ProgressCallback) ([]*EvalResult, error)
 }
 
+// RunnerOptions configures the eval runner behavior
+type RunnerOptions struct {
+	ParallelWorkers int
+}
+
 type evalRunner struct {
 	spec             *EvalSpec
 	progressCallback ProgressCallback
+	parallelWorkers  int
 }
 
 var _ EvalRunner = &evalRunner{}
@@ -66,14 +75,20 @@ type taskConfig struct {
 }
 
 // NewRunner creates a new EvalRunner from an EvalSpec
-func NewRunner(spec *EvalSpec) (EvalRunner, error) {
+func NewRunner(spec *EvalSpec, opts ...RunnerOptions) (EvalRunner, error) {
 	if spec == nil {
 		return nil, fmt.Errorf("eval spec cannot be nil")
+	}
+
+	workers := 1
+	if len(opts) > 0 && opts[0].ParallelWorkers > 0 {
+		workers = opts[0].ParallelWorkers
 	}
 
 	return &evalRunner{
 		spec:             spec,
 		progressCallback: NoopProgressCallback,
+		parallelWorkers:  workers,
 	}, nil
 }
 
@@ -220,14 +235,30 @@ func (r *evalRunner) RunWithProgress(ctx context.Context, taskPattern string, ca
 		return nil, err
 	}
 
+	// Group tasks by parallel support
+	groups := groupTasksByParallelSupport(taskConfigs)
+
 	results := make([]*EvalResult, 0, len(taskConfigs))
 	var runErr error
-	for _, tc := range taskConfigs {
-		result, err := r.runTask(ctx, runner, mcpManager, tc)
-		if err != nil {
-			runErr = errors.Join(runErr, err)
+
+	for _, group := range groups {
+		if group.parallel && r.parallelWorkers > 1 {
+			// Run parallel tasks with worker limit (each task gets its own MCP connections)
+			groupResults, err := r.runParallelGroup(ctx, runner, mcpConfig, group.tasks)
+			if err != nil {
+				runErr = errors.Join(runErr, err)
+			}
+			results = append(results, groupResults...)
 		} else {
-			results = append(results, result)
+			// Run sequentially
+			for _, tc := range group.tasks {
+				result, err := r.runTask(ctx, runner, mcpManager, tc)
+				if err != nil {
+					runErr = errors.Join(runErr, err)
+				} else {
+					results = append(results, result)
+				}
+			}
 		}
 	}
 
@@ -285,6 +316,130 @@ func (r *evalRunner) collectTaskConfigs(rx *regexp.Regexp) ([]taskConfig, error)
 	return taskConfigs, nil
 }
 
+// taskGroup represents a batch of tasks to run together
+type taskGroup struct {
+	tasks    []taskConfig
+	parallel bool
+}
+
+// groupTasksByParallelSupport separates tasks into sequential and parallel groups.
+// Sequential tasks run first (in order), then all parallel tasks run together as one batch.
+func groupTasksByParallelSupport(tasks []taskConfig) []taskGroup {
+	if len(tasks) == 0 {
+		return nil
+	}
+
+	var sequential []taskConfig
+	var parallel []taskConfig
+
+	for _, tc := range tasks {
+		if tc.spec.Metadata.Parallel {
+			parallel = append(parallel, tc)
+		} else {
+			sequential = append(sequential, tc)
+		}
+	}
+
+	var groups []taskGroup
+
+	// Add sequential tasks as individual groups (run in order)
+	for _, tc := range sequential {
+		groups = append(groups, taskGroup{
+			tasks:    []taskConfig{tc},
+			parallel: false,
+		})
+	}
+
+	// Add all parallel tasks as one group
+	if len(parallel) > 0 {
+		groups = append(groups, taskGroup{
+			tasks:    parallel,
+			parallel: true,
+		})
+	}
+
+	return groups
+}
+
+// runParallelGroup runs a group of tasks in parallel with worker limit.
+// Each parallel task gets its own MCP manager to avoid serialization on shared connections.
+func (r *evalRunner) runParallelGroup(
+	ctx context.Context,
+	agentRunner agent.Runner,
+	mcpConfig *mcpclient.MCPConfig,
+	tasks []taskConfig,
+) ([]*EvalResult, error) {
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(r.parallelWorkers)
+
+	results := make([]*EvalResult, len(tasks))
+	var mu sync.Mutex
+	var collectedErrs error
+
+	for i, tc := range tasks {
+		g.Go(func() error {
+			// Create a separate MCP manager for this task to enable true parallelism
+			taskMcpManager, err := mcpclient.NewManager(gctx, mcpConfig)
+			if err != nil {
+				// Create a failed result so the task failure is visible
+				result := &EvalResult{
+					TaskName:   tc.spec.Metadata.Name,
+					TaskPath:   tc.path,
+					Difficulty: tc.spec.Metadata.Difficulty,
+					Parallel:   tc.spec.Metadata.Parallel,
+					TaskPassed: false,
+					TaskError:  fmt.Sprintf("failed to create mcp manager: %v", err),
+				}
+				mu.Lock()
+				results[i] = result
+				collectedErrs = errors.Join(collectedErrs, fmt.Errorf("failed to create mcp manager for task %s: %w", tc.spec.Metadata.Name, err))
+				mu.Unlock()
+				return nil
+			}
+			defer func() {
+				_ = taskMcpManager.Close(gctx)
+			}()
+
+			result, err := r.runTask(gctx, agentRunner, taskMcpManager, tc)
+
+			mu.Lock()
+			defer mu.Unlock()
+
+			if err != nil {
+				collectedErrs = errors.Join(collectedErrs, err)
+			}
+			// Ensure we always have a result, even if runTask returned nil with an error
+			if result == nil && err != nil {
+				result = &EvalResult{
+					TaskName:   tc.spec.Metadata.Name,
+					TaskPath:   tc.path,
+					Difficulty: tc.spec.Metadata.Difficulty,
+					Parallel:   tc.spec.Metadata.Parallel,
+					TaskPassed: false,
+					TaskError:  err.Error(),
+				}
+			}
+			results[i] = result
+			return nil // Don't fail fast - collect all errors
+		})
+	}
+
+	// Wait for all tasks to complete
+	if err := g.Wait(); err != nil {
+		collectedErrs = errors.Join(collectedErrs, err)
+	}
+
+	// Filter out nil results
+	var finalResults []*EvalResult
+	for _, res := range results {
+		if res != nil {
+			finalResults = append(finalResults, res)
+		}
+	}
+
+	return finalResults, collectedErrs
+}
+
 func (r *evalRunner) runTask(
 	ctx context.Context,
 	agentRunner agent.Runner,
@@ -295,6 +450,7 @@ func (r *evalRunner) runTask(
 		TaskName:   tc.spec.Metadata.Name,
 		TaskPath:   tc.path,
 		Difficulty: tc.spec.Metadata.Difficulty,
+		Parallel:   tc.spec.Metadata.Parallel,
 	}
 
 	r.progressCallback(ProgressEvent{

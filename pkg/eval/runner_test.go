@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/mcpchecker/mcpchecker/pkg/mcpclient"
+	"github.com/mcpchecker/mcpchecker/pkg/task"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -378,6 +379,148 @@ func TestLoadMcpConfig(t *testing.T) {
 			require.NoError(t, err)
 			if tc.validateFunc != nil {
 				tc.validateFunc(t, config)
+			}
+		})
+	}
+}
+
+func TestNewRunnerWithOptions(t *testing.T) {
+	spec := &EvalSpec{
+		Config: EvalConfig{},
+	}
+
+	tests := map[string]struct {
+		opts            []RunnerOptions
+		expectedWorkers int
+	}{
+		"no options - defaults to 1": {
+			opts:            nil,
+			expectedWorkers: 1,
+		},
+		"empty options - defaults to 1": {
+			opts:            []RunnerOptions{{}},
+			expectedWorkers: 1,
+		},
+		"zero workers - defaults to 1": {
+			opts:            []RunnerOptions{{ParallelWorkers: 0}},
+			expectedWorkers: 1,
+		},
+		"negative workers - defaults to 1": {
+			opts:            []RunnerOptions{{ParallelWorkers: -5}},
+			expectedWorkers: 1,
+		},
+		"valid workers": {
+			opts:            []RunnerOptions{{ParallelWorkers: 4}},
+			expectedWorkers: 4,
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			runner, err := NewRunner(spec, tc.opts...)
+			require.NoError(t, err)
+
+			r := runner.(*evalRunner)
+			assert.Equal(t, tc.expectedWorkers, r.parallelWorkers)
+		})
+	}
+}
+
+func TestGroupTasksByParallelSupport(t *testing.T) {
+	makeTask := func(name string, parallel bool) taskConfig {
+		return taskConfig{
+			path: name + ".yaml",
+			spec: &task.TaskConfig{
+				Metadata: task.TaskMetadata{
+					Name:     name,
+					Parallel: parallel,
+				},
+			},
+		}
+	}
+
+	tests := map[string]struct {
+		tasks             []taskConfig
+		expectedSeqCount  int
+		expectedParCount  int
+		expectedGroupSize int // size of parallel group (0 if no parallel group)
+	}{
+		"empty tasks": {
+			tasks:             []taskConfig{},
+			expectedSeqCount:  0,
+			expectedParCount:  0,
+			expectedGroupSize: 0,
+		},
+		"all sequential": {
+			tasks: []taskConfig{
+				makeTask("a", false),
+				makeTask("b", false),
+				makeTask("c", false),
+			},
+			expectedSeqCount:  3,
+			expectedParCount:  0,
+			expectedGroupSize: 0,
+		},
+		"all parallel": {
+			tasks: []taskConfig{
+				makeTask("a", true),
+				makeTask("b", true),
+				makeTask("c", true),
+			},
+			expectedSeqCount:  0,
+			expectedParCount:  1,
+			expectedGroupSize: 3,
+		},
+		"mixed - sequential first then parallel": {
+			tasks: []taskConfig{
+				makeTask("a", false),
+				makeTask("b", true),
+				makeTask("c", true),
+			},
+			expectedSeqCount:  1,
+			expectedParCount:  1,
+			expectedGroupSize: 2,
+		},
+		"mixed - interleaved": {
+			tasks: []taskConfig{
+				makeTask("a", false),
+				makeTask("b", true),
+				makeTask("c", false),
+				makeTask("d", true),
+				makeTask("e", true),
+			},
+			expectedSeqCount:  2,
+			expectedParCount:  1,
+			expectedGroupSize: 3,
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			groups := groupTasksByParallelSupport(tc.tasks)
+
+			seqCount := 0
+			parCount := 0
+			parGroupSize := 0
+
+			for _, g := range groups {
+				if g.parallel {
+					parCount++
+					parGroupSize = len(g.tasks)
+				} else {
+					seqCount++
+					assert.Len(t, g.tasks, 1, "sequential groups should have exactly 1 task")
+				}
+			}
+
+			assert.Equal(t, tc.expectedSeqCount, seqCount, "sequential group count")
+			assert.Equal(t, tc.expectedParCount, parCount, "parallel group count")
+			assert.Equal(t, tc.expectedGroupSize, parGroupSize, "parallel group size")
+
+			// Verify sequential tasks come before parallel
+			if parCount > 0 && seqCount > 0 {
+				lastGroup := groups[len(groups)-1]
+				require.True(t, lastGroup.parallel, "parallel group should be last")
 			}
 		})
 	}

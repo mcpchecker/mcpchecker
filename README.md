@@ -271,6 +271,56 @@ taskSets:
 - Combine directory structure with labels for robust organization
 - Use globs for path-based filtering, labels for semantic filtering
 
+## Parallel Execution
+
+Tasks can be marked for parallel execution to speed up evaluations when tasks are independent of each other.
+
+### Marking Tasks as Parallel
+
+Add `parallel: true` to the task metadata:
+
+```yaml
+kind: Task
+metadata:
+  name: "create-nginx-pod"
+  difficulty: easy
+  parallel: true  # This task can run in parallel
+steps:
+  # ...
+```
+
+### Running Tasks in Parallel
+
+Use the `-p` or `--parallel` flag to specify the number of concurrent workers:
+
+```bash
+# Run with 4 parallel workers
+mcpchecker check eval.yaml -p 4
+
+# Sequential execution (default)
+mcpchecker check eval.yaml
+```
+
+### Execution Order
+
+When `--parallel` is greater than 1:
+1. Sequential tasks (without `parallel: true`) run first, one at a time, in order
+2. Parallel tasks run together as a batch, limited by the worker count
+
+This ensures sequential tasks complete before parallel tasks begin, which is useful when some tasks need to run in a specific order (e.g., setup tasks) while others are independent.
+
+### When to Use Parallel Execution
+
+Mark a task as `parallel: true` when:
+- The task is independent and doesn't depend on state from other tasks
+- The task doesn't modify shared resources that other tasks rely on
+- Setup and cleanup scripts handle isolation properly
+
+Keep tasks sequential (default) when:
+- Tasks must run in a specific order
+- Tasks share state or resources
+- One task depends on the output of another
+
 ## Assertions
 
 Validate agent behavior:
@@ -587,11 +637,18 @@ commands:
 
 ## CLI Commands
 
-### `mcpchecker eval`
+### `mcpchecker check`
 Run evaluations against your MCP server:
 ```bash
-mcpchecker eval examples/kubernetes/eval.yaml
+mcpchecker check examples/kubernetes/eval.yaml
 ```
+
+Options:
+- `-o, --output` - Output format: text or json (default: text)
+- `-v, --verbose` - Enable verbose output
+- `-r, --run` - Regular expression to filter task names
+- `-l, --label-selector` - Filter tasks by label (e.g., "suite=kubernetes")
+- `-p, --parallel` - Number of parallel workers for tasks marked as parallel (default: 1)
 
 ### `mcpchecker summary`
 Display a summary of evaluation results:

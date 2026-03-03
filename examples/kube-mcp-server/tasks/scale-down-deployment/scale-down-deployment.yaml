@@ -2,6 +2,7 @@ kind: Task
 metadata:
   name: scale-down-deployment
   difficulty: medium
+  parallel: true
 steps:
   setup:
     file: setup.sh

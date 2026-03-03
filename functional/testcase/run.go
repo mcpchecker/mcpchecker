@@ -269,6 +269,9 @@ func (r *Runner) runMcpChecker(ctx context.Context) *RunContext {
 
 	// Build command - eval takes config file as positional argument
 	args := []string{"check", r.evalFile}
+	if r.tc.parallelWorkers > 0 {
+		args = append(args, "--parallel", fmt.Sprintf("%d", r.tc.parallelWorkers))
+	}
 	cmd := exec.CommandContext(ctx, mcpCheckerBinary, args...)
 
 	// Run from temp directory so output file is written there

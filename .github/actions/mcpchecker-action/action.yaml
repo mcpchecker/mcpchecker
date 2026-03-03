@@ -62,6 +62,11 @@ inputs:
     required: false
     default: '.'
 
+  parallel:
+    description: 'Number of parallel workers for tasks marked as parallel (1 = sequential)'
+    required: false
+    default: '1'
+
 outputs:
   results-file:
     description: 'Path to the JSON results file'
@@ -154,6 +159,9 @@ runs:
         fi
         if [ "${{ inputs.verbose }}" = "true" ]; then
           CMD+=("--verbose")
+        fi
+        if [ "${{ inputs.parallel }}" != "1" ] && [ -n "${{ inputs.parallel }}" ]; then
+          CMD+=("--parallel" "${{ inputs.parallel }}")
         fi
 
         echo "Running: ${CMD[@]}"

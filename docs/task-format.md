@@ -26,6 +26,7 @@ apiVersion: mcpchecker/v1alpha2
 metadata:
   name: string        # Required. Unique task identifier.
   difficulty: string  # Optional. One of: easy, medium, hard.
+  parallel: bool      # Optional. If true, task can run in parallel with other parallel tasks.
 
 spec:
   requires:           # Optional. Extension requirements.
@@ -249,6 +250,28 @@ cleanup:
 ```
 
 The arguments passed to each operation depend on the extension. Extensions define their operations and parameter schemas in their manifest. See the extension's documentation for available operations.
+
+## Parallel Execution
+
+Tasks can be marked for parallel execution using the `parallel` metadata field:
+
+```yaml
+kind: Task
+apiVersion: mcpchecker/v1alpha2
+metadata:
+  name: create-nginx-pod
+  difficulty: easy
+  parallel: true  # This task can run in parallel with other parallel tasks
+
+spec:
+  # ...
+```
+
+When running mcpchecker with `--parallel N` (where N > 1):
+1. Sequential tasks (without `parallel: true`) run first, one at a time
+2. Parallel tasks run together as a batch, with up to N concurrent workers
+
+Mark a task as parallel when it is independent and doesn't share state with other tasks. Keep the default (`parallel: false`) for tasks that must run in order or depend on each other.
 
 ## Complete Example
 

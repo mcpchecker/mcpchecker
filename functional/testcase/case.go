@@ -20,6 +20,9 @@ type TestCase struct {
 	tasks []*TaskConfig
 	eval  *EvalConfig
 
+	// CLI options
+	parallelWorkers int
+
 	// Assertions to run after the test
 	assertions []Assertion
 }
@@ -80,6 +83,12 @@ func (tc *TestCase) AddTask(configure func(*TaskConfig)) *TestCase {
 func (tc *TestCase) WithEval(configure func(*EvalConfig)) *TestCase {
 	tc.eval = NewEvalConfig()
 	configure(tc.eval)
+	return tc
+}
+
+// WithParallelWorkers sets the number of parallel workers for task execution
+func (tc *TestCase) WithParallelWorkers(workers int) *TestCase {
+	tc.parallelWorkers = workers
 	return tc
 }
 
