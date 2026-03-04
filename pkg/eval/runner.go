@@ -77,7 +77,7 @@ var _ EvalRunner = &evalRunner{}
 type taskConfig struct {
 	path       string
 	spec       *task.TaskConfig
-	assertions *TaskAssertions
+	assertions []*TaskAssertions // multiple assertion sets from matching TaskSets, evaluated independently
 }
 
 // NewRunner creates a new EvalRunner from an EvalSpec
@@ -256,6 +256,7 @@ func (r *evalRunner) RunWithProgress(ctx context.Context, taskPattern string, ca
 
 func (r *evalRunner) collectTaskConfigs(rx *regexp.Regexp) ([]taskConfig, error) {
 	taskConfigs := make([]taskConfig, 0)
+	seen := make(map[string]int) // maps canonical path to index in taskConfigs for merging assertions
 
 	for _, ts := range r.spec.Config.TaskSets {
 		var paths []string
@@ -289,10 +290,32 @@ func (r *evalRunner) collectTaskConfigs(rx *regexp.Regexp) ([]taskConfig, error)
 				continue
 			}
 
+			// Canonicalize path for deduplication (resolves ./foo vs foo, symlinks, etc.)
+			canonicalPath, err := filepath.Abs(path)
+			if err != nil {
+				canonicalPath = path // fallback to raw path if Abs fails
+			}
+			if resolved, err := filepath.EvalSymlinks(canonicalPath); err == nil {
+				canonicalPath = resolved
+			}
+
+			// If task already exists, append assertions to evaluate independently
+			if idx, exists := seen[canonicalPath]; exists {
+				if ts.Assertions != nil {
+					taskConfigs[idx].assertions = append(taskConfigs[idx].assertions, ts.Assertions)
+				}
+				continue
+			}
+
+			seen[canonicalPath] = len(taskConfigs)
+			var assertions []*TaskAssertions
+			if ts.Assertions != nil {
+				assertions = []*TaskAssertions{ts.Assertions}
+			}
 			taskConfigs = append(taskConfigs, taskConfig{
 				path:       path,
 				spec:       taskSpec,
-				assertions: ts.Assertions,
+				assertions: assertions,
 			})
 		}
 	}
@@ -716,14 +739,78 @@ func (r *evalRunner) evaluateTaskAssertions(
 	manager mcpproxy.ServerManager,
 	result *EvalResult,
 ) {
-	if tc.assertions != nil {
-		evaluator := NewCompositeAssertionEvaluator(tc.assertions)
-		assertionResults := evaluator.Evaluate(manager.GetAllCallHistory())
-
-		result.AssertionResults = assertionResults
-		result.AllAssertionsPassed = assertionResults.Succeeded()
-	} else {
+	if len(tc.assertions) == 0 {
 		// No assertions = all pass
 		result.AllAssertionsPassed = true
+		return
+	}
+
+	// Evaluate each assertion set independently and combine results
+	callHistory := manager.GetAllCallHistory()
+	var combinedResults *CompositeAssertionResult
+	allPassed := true
+
+	for _, assertions := range tc.assertions {
+		if assertions == nil {
+			continue
+		}
+		evaluator := NewCompositeAssertionEvaluator(assertions)
+		assertionResults := evaluator.Evaluate(callHistory)
+
+		if combinedResults == nil {
+			combinedResults = assertionResults
+		} else {
+			combinedResults = mergeAssertionResults(combinedResults, assertionResults)
+		}
+
+		if !assertionResults.Succeeded() {
+			allPassed = false
+		}
+	}
+
+	result.AssertionResults = combinedResults
+	result.AllAssertionsPassed = allPassed
+}
+
+// mergeAssertionResults combines results from multiple assertion evaluations.
+// For each field, if either result has a value, the merged result uses the first non-nil.
+// If both have values and either failed, the merged result shows the failure.
+func mergeAssertionResults(a, b *CompositeAssertionResult) *CompositeAssertionResult {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+
+	mergeField := func(x, y *SingleAssertionResult) *SingleAssertionResult {
+		if x == nil {
+			return y
+		}
+		if y == nil {
+			return x
+		}
+		// If either failed, return the failure
+		if !x.Passed {
+			return x
+		}
+		if !y.Passed {
+			return y
+		}
+		return x
+	}
+
+	return &CompositeAssertionResult{
+		ToolsUsed:        mergeField(a.ToolsUsed, b.ToolsUsed),
+		RequireAny:       mergeField(a.RequireAny, b.RequireAny),
+		ToolsNotUsed:     mergeField(a.ToolsNotUsed, b.ToolsNotUsed),
+		MinToolCalls:     mergeField(a.MinToolCalls, b.MinToolCalls),
+		MaxToolCalls:     mergeField(a.MaxToolCalls, b.MaxToolCalls),
+		ResourcesRead:    mergeField(a.ResourcesRead, b.ResourcesRead),
+		ResourcesNotRead: mergeField(a.ResourcesNotRead, b.ResourcesNotRead),
+		PromptsUsed:      mergeField(a.PromptsUsed, b.PromptsUsed),
+		PromptsNotUsed:   mergeField(a.PromptsNotUsed, b.PromptsNotUsed),
+		CallOrder:        mergeField(a.CallOrder, b.CallOrder),
+		NoDuplicateCalls: mergeField(a.NoDuplicateCalls, b.NoDuplicateCalls),
 	}
 }

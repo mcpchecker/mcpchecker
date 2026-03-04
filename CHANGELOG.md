@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 ### Fixed
+- Deduplicate tasks when multiple globs or paths match the same file (using canonical path resolution), evaluating all assertions from matching TaskSets independently
 
 ## [0.0.5]
 

@@ -2,6 +2,7 @@ package eval
 
 import (
 	"os"
+	"regexp"
 	"testing"
 
 	"github.com/mcpchecker/mcpchecker/pkg/mcpclient"
@@ -141,6 +142,7 @@ func TestLoadAgentSpec(t *testing.T) {
 		})
 	}
 }
+
 func TestMatchesLabelSelector(t *testing.T) {
 	tests := map[string]struct {
 		taskLabels map[string]string
@@ -605,4 +607,132 @@ func TestGetRunsForTask(t *testing.T) {
 			assert.Equal(t, tc.expected, result)
 		})
 	}
+}
+
+func TestCollectTaskConfigsDeduplication(t *testing.T) {
+	tests := map[string]struct {
+		taskSets      []TaskSet
+		expectedCount int
+	}{
+		"duplicate paths from multiple globs": {
+			taskSets: []TaskSet{
+				{Glob: "../task/testdata/*.yaml"},
+				{Glob: "../task/testdata/*.yaml"}, // same glob twice
+			},
+			expectedCount: 2, // 2 unique files, duplicates removed
+		},
+		"overlapping glob and explicit path": {
+			taskSets: []TaskSet{
+				{Glob: "../task/testdata/*.yaml"},
+				{Path: "../task/testdata/create-pod-inline.yaml"}, // explicit path that matches glob
+			},
+			expectedCount: 2, // should deduplicate the overlapping one
+		},
+		"single task set": {
+			taskSets: []TaskSet{
+				{Glob: "../task/testdata/*.yaml"},
+			},
+			expectedCount: 2, // 2 task files in testdata
+		},
+		"triple duplicate same path": {
+			taskSets: []TaskSet{
+				{Path: "../task/testdata/create-pod-inline.yaml"},
+				{Path: "../task/testdata/create-pod-inline.yaml"},
+				{Path: "../task/testdata/create-pod-inline.yaml"},
+			},
+			expectedCount: 1, // should deduplicate to 1
+		},
+		"equivalent paths with dot prefix": {
+			taskSets: []TaskSet{
+				{Path: "../task/testdata/create-pod-inline.yaml"},
+				{Path: "./../task/testdata/create-pod-inline.yaml"}, // same file, different path format
+			},
+			expectedCount: 1, // should deduplicate via canonical path
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			runner := &evalRunner{
+				spec: &EvalSpec{
+					Config: EvalConfig{
+						TaskSets: tc.taskSets,
+					},
+				},
+			}
+
+			rx := regexp.MustCompile(".*")
+			configs, err := runner.collectTaskConfigs(rx)
+			require.NoError(t, err)
+			assert.Len(t, configs, tc.expectedCount)
+		})
+	}
+}
+
+func TestCollectTaskConfigsAssertionSets(t *testing.T) {
+	minCalls := 2
+	maxCalls := 10
+
+	runner := &evalRunner{
+		spec: &EvalSpec{
+			Config: EvalConfig{
+				TaskSets: []TaskSet{
+					{
+						Path: "../task/testdata/create-pod-inline.yaml",
+						Assertions: &TaskAssertions{
+							ToolsUsed:    []ToolAssertion{{Server: "s1", Tool: "t1"}},
+							MinToolCalls: &minCalls,
+						},
+					},
+					{
+						Path: "../task/testdata/create-pod-inline.yaml",
+						Assertions: &TaskAssertions{
+							ToolsUsed:        []ToolAssertion{{Server: "s2", Tool: "t2"}},
+							NoDuplicateCalls: true,
+							MaxToolCalls:     &maxCalls,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	rx := regexp.MustCompile(".*")
+	configs, err := runner.collectTaskConfigs(rx)
+	require.NoError(t, err)
+	require.Len(t, configs, 1, "should deduplicate to single task")
+
+	// Assertions should be kept as separate sets, not merged
+	assertions := configs[0].assertions
+	require.Len(t, assertions, 2, "should have 2 separate assertion sets")
+
+	// First assertion set
+	assert.Len(t, assertions[0].ToolsUsed, 1)
+	assert.Equal(t, "s1", assertions[0].ToolsUsed[0].Server)
+	assert.Equal(t, minCalls, *assertions[0].MinToolCalls)
+
+	// Second assertion set
+	assert.Len(t, assertions[1].ToolsUsed, 1)
+	assert.Equal(t, "s2", assertions[1].ToolsUsed[0].Server)
+	assert.True(t, assertions[1].NoDuplicateCalls)
+	assert.Equal(t, maxCalls, *assertions[1].MaxToolCalls)
+}
+
+func TestCollectTaskConfigsNilAssertions(t *testing.T) {
+	runner := &evalRunner{
+		spec: &EvalSpec{
+			Config: EvalConfig{
+				TaskSets: []TaskSet{
+					{Path: "../task/testdata/create-pod-inline.yaml"},
+					{Path: "../task/testdata/create-pod-inline.yaml", Assertions: nil},
+				},
+			},
+		},
+	}
+
+	rx := regexp.MustCompile(".*")
+	configs, err := runner.collectTaskConfigs(rx)
+	require.NoError(t, err)
+	require.Len(t, configs, 1)
+	assert.Len(t, configs[0].assertions, 0, "nil assertions should not be added to slice")
 }
