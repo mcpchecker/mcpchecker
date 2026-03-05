@@ -8,9 +8,9 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/mcpchecker/mcpchecker/pkg/agent"
-	"golang.org/x/sync/errgroup"
 	"github.com/mcpchecker/mcpchecker/pkg/extension/client"
 	"github.com/mcpchecker/mcpchecker/pkg/extension/resolver"
 	"github.com/mcpchecker/mcpchecker/pkg/llmjudge"
@@ -188,16 +188,6 @@ func (r *evalRunner) RunWithProgress(ctx context.Context, taskPattern string, ca
 		return nil, err
 	}
 
-	mcpManager, err := mcpclient.NewManager(ctx, mcpConfig)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create mcp manager: %w", err)
-	}
-	defer func() {
-		_ = mcpManager.Close(ctx)
-	}()
-
-	ctx = mcpclient.ManagerToContext(ctx, mcpManager)
-
 	agentSpec, err := r.loadAgentSpec()
 	if err != nil {
 		return nil, fmt.Errorf("failed to load agent spec: %w", err)
@@ -217,17 +207,6 @@ func (r *evalRunner) RunWithProgress(ctx context.Context, taskPattern string, ca
 		BasePath: r.spec.BasePath(),
 	})
 
-	manager := client.NewManager(resolver, client.ExtensionOptions{})
-	defer manager.ShutdownAll(ctx)
-
-	for alias, ext := range r.spec.Config.Extensions {
-		if err := manager.Register(alias, ext); err != nil {
-			return nil, fmt.Errorf("registering extension %q (%s): %w", alias, ext.Package, err)
-		}
-	}
-
-	ctx = client.ManagerToContext(ctx, manager)
-
 	ctx = llmjudge.WithJudge(ctx, judge)
 
 	taskConfigs, err := r.collectTaskConfigs(taskMatcher)
@@ -239,27 +218,16 @@ func (r *evalRunner) RunWithProgress(ctx context.Context, taskPattern string, ca
 	groups := groupTasksByParallelSupport(taskConfigs)
 
 	results := make([]*EvalResult, 0, len(taskConfigs))
-	var runErr error
 
 	for _, group := range groups {
+		// Determine worker limit: use configured workers for parallel tasks, 1 for sequential
+		workerLimit := 1
 		if group.parallel && r.parallelWorkers > 1 {
-			// Run parallel tasks with worker limit (each task gets its own MCP connections)
-			groupResults, err := r.runParallelGroup(ctx, runner, mcpConfig, group.tasks)
-			if err != nil {
-				runErr = errors.Join(runErr, err)
-			}
-			results = append(results, groupResults...)
-		} else {
-			// Run sequentially
-			for _, tc := range group.tasks {
-				result, err := r.runTask(ctx, runner, mcpManager, tc)
-				if err != nil {
-					runErr = errors.Join(runErr, err)
-				} else {
-					results = append(results, result)
-				}
-			}
+			workerLimit = r.parallelWorkers
 		}
+
+		groupResults := r.runTaskGroup(ctx, runner, mcpConfig, resolver, group.tasks, workerLimit)
+		results = append(results, groupResults...)
 	}
 
 	r.progressCallback(ProgressEvent{
@@ -267,7 +235,7 @@ func (r *evalRunner) RunWithProgress(ctx context.Context, taskPattern string, ca
 		Message: "Evaluation complete",
 	})
 
-	return results, runErr
+	return results, nil
 }
 
 func (r *evalRunner) collectTaskConfigs(rx *regexp.Regexp) ([]taskConfig, error) {
@@ -361,75 +329,42 @@ func groupTasksByParallelSupport(tasks []taskConfig) []taskGroup {
 	return groups
 }
 
-// runParallelGroup runs a group of tasks in parallel with worker limit.
-// Each parallel task gets its own MCP manager to avoid serialization on shared connections.
-func (r *evalRunner) runParallelGroup(
+// runTaskGroup runs a group of tasks with the specified worker limit.
+// Each task gets its own MCP and extension managers to ensure isolation.
+func (r *evalRunner) runTaskGroup(
 	ctx context.Context,
 	agentRunner agent.Runner,
 	mcpConfig *mcpclient.MCPConfig,
+	extResolver resolver.Resolver,
 	tasks []taskConfig,
-) ([]*EvalResult, error) {
-	g, gctx := errgroup.WithContext(ctx)
-	g.SetLimit(r.parallelWorkers)
-
+	workerLimit int,
+) []*EvalResult {
 	results := make([]*EvalResult, len(tasks))
 	var mu sync.Mutex
-	var collectedErrs error
+
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, workerLimit)
 
 	for i, tc := range tasks {
-		g.Go(func() error {
-			// Create a separate MCP manager for this task to enable true parallelism
-			taskMcpManager, err := mcpclient.NewManager(gctx, mcpConfig)
-			if err != nil {
-				// Create a failed result so the task failure is visible
-				result := &EvalResult{
-					TaskName:   tc.spec.Metadata.Name,
-					TaskPath:   tc.path,
-					Difficulty: tc.spec.Metadata.Difficulty,
-					Parallel:   tc.spec.Metadata.Parallel,
-					TaskPassed: false,
-					TaskError:  fmt.Sprintf("failed to create mcp manager: %v", err),
-				}
-				mu.Lock()
-				results[i] = result
-				collectedErrs = errors.Join(collectedErrs, fmt.Errorf("failed to create mcp manager for task %s: %w", tc.spec.Metadata.Name, err))
-				mu.Unlock()
-				return nil
-			}
-			defer func() {
-				_ = taskMcpManager.Close(gctx)
-			}()
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 
-			result, err := r.runTask(gctx, agentRunner, taskMcpManager, tc)
+			// Acquire semaphore
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			result := r.executeTask(ctx, agentRunner, mcpConfig, extResolver, tc)
 
 			mu.Lock()
-			defer mu.Unlock()
-
-			if err != nil {
-				collectedErrs = errors.Join(collectedErrs, err)
-			}
-			// Ensure we always have a result, even if runTask returned nil with an error
-			if result == nil && err != nil {
-				result = &EvalResult{
-					TaskName:   tc.spec.Metadata.Name,
-					TaskPath:   tc.path,
-					Difficulty: tc.spec.Metadata.Difficulty,
-					Parallel:   tc.spec.Metadata.Parallel,
-					TaskPassed: false,
-					TaskError:  err.Error(),
-				}
-			}
 			results[i] = result
-			return nil // Don't fail fast - collect all errors
-		})
+			mu.Unlock()
+		}()
 	}
 
-	// Wait for all tasks to complete
-	if err := g.Wait(); err != nil {
-		collectedErrs = errors.Join(collectedErrs, err)
-	}
+	wg.Wait()
 
-	// Filter out nil results
+	// Filter out nil results (shouldn't happen, but be defensive)
 	var finalResults []*EvalResult
 	for _, res := range results {
 		if res != nil {
@@ -437,13 +372,79 @@ func (r *evalRunner) runParallelGroup(
 		}
 	}
 
-	return finalResults, collectedErrs
+	return finalResults
+}
+
+// executeTask runs a single task with its own isolated MCP and extension managers.
+// Always returns a result, even on error.
+func (r *evalRunner) executeTask(
+	ctx context.Context,
+	agentRunner agent.Runner,
+	mcpConfig *mcpclient.MCPConfig,
+	extResolver resolver.Resolver,
+	tc taskConfig,
+) *EvalResult {
+	// Create a separate MCP manager for this task
+	taskMcpManager, err := mcpclient.NewManager(ctx, mcpConfig)
+	if err != nil {
+		return &EvalResult{
+			TaskName:   tc.spec.Metadata.Name,
+			TaskPath:   tc.path,
+			Difficulty: tc.spec.Metadata.Difficulty,
+			Parallel:   tc.spec.Metadata.Parallel,
+			TaskPassed: false,
+			TaskError:  fmt.Sprintf("failed to create mcp manager: %v", err),
+		}
+	}
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = taskMcpManager.Close(cleanupCtx)
+	}()
+
+	// Create a separate extension manager for this task
+	taskExtManager := client.NewManager(extResolver, client.ExtensionOptions{})
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = taskExtManager.ShutdownAll(cleanupCtx)
+	}()
+
+	for alias, ext := range r.spec.Config.Extensions {
+		if err := taskExtManager.Register(alias, ext); err != nil {
+			return &EvalResult{
+				TaskName:   tc.spec.Metadata.Name,
+				TaskPath:   tc.path,
+				Difficulty: tc.spec.Metadata.Difficulty,
+				Parallel:   tc.spec.Metadata.Parallel,
+				TaskPassed: false,
+				TaskError:  fmt.Sprintf("failed to register extension %s: %v", alias, err),
+			}
+		}
+	}
+
+	// Attach task-specific managers to context
+	taskCtx := mcpclient.ManagerToContext(ctx, taskMcpManager)
+	taskCtx = client.ManagerToContext(taskCtx, taskExtManager)
+
+	result, err := r.runTask(taskCtx, agentRunner, tc)
+	if err != nil && result == nil {
+		return &EvalResult{
+			TaskName:   tc.spec.Metadata.Name,
+			TaskPath:   tc.path,
+			Difficulty: tc.spec.Metadata.Difficulty,
+			Parallel:   tc.spec.Metadata.Parallel,
+			TaskPassed: false,
+			TaskError:  err.Error(),
+		}
+	}
+
+	return result
 }
 
 func (r *evalRunner) runTask(
 	ctx context.Context,
 	agentRunner agent.Runner,
-	mcpManager mcpclient.Manager,
 	tc taskConfig,
 ) (*EvalResult, error) {
 	result := &EvalResult{
@@ -465,7 +466,7 @@ func (r *evalRunner) runTask(
 		Task:    result,
 	})
 
-	taskRunner, manager, cleanup, err := r.setupTaskResources(ctx, tc, mcpManager, result)
+	taskRunner, manager, cleanup, err := r.setupTaskResources(ctx, tc, result)
 	if err != nil {
 		result.TaskPassed = false
 		result.TaskError = err.Error()
@@ -531,9 +532,13 @@ func (r *evalRunner) runTask(
 func (r *evalRunner) setupTaskResources(
 	ctx context.Context,
 	tc taskConfig,
-	mcpManager mcpclient.Manager,
 	result *EvalResult,
 ) (task.TaskRunner, mcpproxy.ServerManager, func(), error) {
+	mcpManager, ok := mcpclient.ManagerFromContext(ctx)
+	if !ok {
+		return nil, nil, nil, fmt.Errorf("mcp manager not found in context")
+	}
+
 	taskRunner, err := task.NewTaskRunner(ctx, tc.spec)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to create task runner for task '%s': %w", tc.spec.Metadata.Name, err)
