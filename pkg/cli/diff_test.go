@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mcpchecker/mcpchecker/pkg/agent"
 	"github.com/mcpchecker/mcpchecker/pkg/eval"
 )
 
@@ -182,6 +183,142 @@ func TestFormatChangeMarkdown(t *testing.T) {
 		if !strings.Contains(result, tt.contains) {
 			t.Errorf("formatChangeMarkdown(%f) = %q, want to contain %q", tt.change, result, tt.contains)
 		}
+	}
+}
+
+func TestFormatTokenCount(t *testing.T) {
+	tests := []struct {
+		tokens int64
+		want   string
+	}{
+		{0, "0"},
+		{500, "500"},
+		{999, "999"},
+		{1000, "1.0K"},
+		{1500, "1.5K"},
+		{10000, "10.0K"},
+		{999999, "1000.0K"},
+		{1000000, "1.0M"},
+		{1500000, "1.5M"},
+		{10000000, "10.0M"},
+		// Negative values
+		{-500, "-500"},
+		{-1500, "-1.5K"},
+		{-1500000, "-1.5M"},
+	}
+
+	for _, tt := range tests {
+		got := formatTokenCount(tt.tokens)
+		if got != tt.want {
+			t.Errorf("formatTokenCount(%d) = %q, want %q", tt.tokens, got, tt.want)
+		}
+	}
+}
+
+func TestFormatTokenChangeMarkdown(t *testing.T) {
+	tests := []struct {
+		base     int64
+		head     int64
+		contains string
+	}{
+		{1000, 1500, "🔴"},  // increase is bad
+		{1500, 1000, "🟢"},  // decrease is good
+		{1000, 1000, "➖"},  // no change
+		{0, 1000, "🔴"},     // base is 0, increase still bad
+		{0, 0, "➖"},        // both 0
+	}
+
+	for _, tt := range tests {
+		result := formatTokenChangeMarkdown(tt.base, tt.head)
+		if !strings.Contains(result, tt.contains) {
+			t.Errorf("formatTokenChangeMarkdown(%d, %d) = %q, want to contain %q", tt.base, tt.head, result, tt.contains)
+		}
+	}
+}
+
+func TestFormatTokenChangeMarkdownWithCoverage(t *testing.T) {
+	tests := []struct {
+		name                string
+		baseTokens          int64
+		baseTasksWithTokens int
+		headTokens          int64
+		headTasksWithTokens int
+		want                string
+	}{
+		{"neither has data", 0, 0, 0, 0, "➖"},
+		{"only head has data", 0, 0, 1000, 2, "(no base data)"},
+		{"only base has data", 1000, 2, 0, 0, "(no head data)"},
+		{"both have data - increase", 1000, 2, 1500, 2, "🔴"},
+		{"both have data - decrease", 1500, 2, 1000, 2, "🟢"},
+		{"both have data - no change", 1000, 2, 1000, 2, "➖"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := formatTokenChangeMarkdownWithCoverage(tt.baseTokens, tt.baseTasksWithTokens, tt.headTokens, tt.headTasksWithTokens)
+			if !strings.Contains(result, tt.want) {
+				t.Errorf("formatTokenChangeMarkdownWithCoverage(%d, %d, %d, %d) = %q, want to contain %q",
+					tt.baseTokens, tt.baseTasksWithTokens, tt.headTokens, tt.headTasksWithTokens, result, tt.want)
+			}
+		})
+	}
+}
+
+func TestCalculateDiffWithTokens(t *testing.T) {
+	baseResults := []*eval.EvalResult{
+		{
+			TaskName:   "task-1",
+			TaskPassed: true,
+			TokenEstimate: &agent.TokenEstimate{
+				TotalTokens:     10000,
+				McpSchemaTokens: 2000,
+			},
+		},
+		{
+			TaskName:   "task-2",
+			TaskPassed: true,
+			TokenEstimate: &agent.TokenEstimate{
+				TotalTokens:     15000,
+				McpSchemaTokens: 3000,
+			},
+		},
+	}
+
+	headResults := []*eval.EvalResult{
+		{
+			TaskName:   "task-1",
+			TaskPassed: true,
+			TokenEstimate: &agent.TokenEstimate{
+				TotalTokens:     8000,
+				McpSchemaTokens: 1500,
+			},
+		},
+		{
+			TaskName:   "task-2",
+			TaskPassed: true,
+			TokenEstimate: &agent.TokenEstimate{
+				TotalTokens:     12000,
+				McpSchemaTokens: 2500,
+			},
+		},
+	}
+
+	diff := calculateDiff("base.json", "head.json", baseResults, headResults)
+
+	// Base: 10000 + 15000 = 25000
+	if diff.BaseStats.TotalTokens != 25000 {
+		t.Errorf("BaseStats.TotalTokens = %d, want 25000", diff.BaseStats.TotalTokens)
+	}
+	if diff.BaseStats.McpSchemaTokens != 5000 {
+		t.Errorf("BaseStats.McpSchemaTokens = %d, want 5000", diff.BaseStats.McpSchemaTokens)
+	}
+
+	// Head: 8000 + 12000 = 20000
+	if diff.HeadStats.TotalTokens != 20000 {
+		t.Errorf("HeadStats.TotalTokens = %d, want 20000", diff.HeadStats.TotalTokens)
+	}
+	if diff.HeadStats.McpSchemaTokens != 4000 {
+		t.Errorf("HeadStats.McpSchemaTokens = %d, want 4000", diff.HeadStats.McpSchemaTokens)
 	}
 }
 

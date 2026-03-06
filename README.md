@@ -688,7 +688,10 @@ Compare two evaluation runs (e.g., main vs PR):
 mcpchecker diff --base results-main.json --current results-pr.json
 mcpchecker diff --base results-main.json --current results-pr.json --output markdown
 ```
-Shows regressions, improvements, new tasks, and removed tasks.
+Shows:
+- Regressions and improvements (tasks that changed pass/fail status)
+- New and removed tasks
+- Token usage comparison (total tokens and MCP schema tokens)
 
 ### `mcpchecker view`
 View detailed results for a specific task:
