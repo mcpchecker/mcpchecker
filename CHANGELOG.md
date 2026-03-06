@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Token usage comparison in diff command (total tokens and MCP schema tokens)
 
 ### Changed
 
