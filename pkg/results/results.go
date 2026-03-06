@@ -19,6 +19,9 @@ type Stats struct {
 	AssertionsTotal   int     `json:"assertionsTotal"`
 	AssertionsPassed  int     `json:"assertionsPassed"`
 	AssertionPassRate float64 `json:"assertionPassRate"`
+	TotalTokens       int64   `json:"totalTokens"`
+	McpSchemaTokens   int64   `json:"mcpSchemaTokens"`
+	TasksWithTokens   int     `json:"tasksWithTokens"` // number of tasks that have token data
 }
 
 // Load reads a JSON results file and returns the parsed evaluations.
@@ -67,6 +70,12 @@ func CalculateStats(resultsFile string, results []*eval.EvalResult) Stats {
 		if result.AssertionResults != nil {
 			stats.AssertionsTotal += result.AssertionResults.TotalAssertions()
 			stats.AssertionsPassed += result.AssertionResults.PassedAssertions()
+		}
+
+		if result.TokenEstimate != nil {
+			stats.TotalTokens += result.TokenEstimate.TotalTokens
+			stats.McpSchemaTokens += result.TokenEstimate.McpSchemaTokens
+			stats.TasksWithTokens++
 		}
 	}
 

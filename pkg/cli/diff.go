@@ -222,6 +222,18 @@ func outputTextDiff(diff DiffResult) {
 		diff.BaseStats.AssertionsPassed, diff.BaseStats.AssertionsTotal,
 		diff.HeadStats.AssertionsPassed, diff.HeadStats.AssertionsTotal)
 	printChange(assertionChange)
+
+	// Token stats (only show if at least one side has actual token data)
+	if diff.BaseStats.TasksWithTokens > 0 || diff.HeadStats.TasksWithTokens > 0 {
+		fmt.Println()
+		_, _ = bold.Println("=== Token Usage ===")
+		fmt.Println()
+		fmt.Printf("             Base        Head        Change\n")
+		fmt.Printf("Tokens:      %-11s %-11s ", formatTokenCountOrNA(diff.BaseStats.TotalTokens, diff.BaseStats.TasksWithTokens), formatTokenCountOrNA(diff.HeadStats.TotalTokens, diff.HeadStats.TasksWithTokens))
+		printTokenChangeWithCoverage(diff.BaseStats.TotalTokens, diff.BaseStats.TasksWithTokens, diff.HeadStats.TotalTokens, diff.HeadStats.TasksWithTokens)
+		fmt.Printf("MCP Schema:  %-11s %-11s ", formatTokenCountOrNA(diff.BaseStats.McpSchemaTokens, diff.BaseStats.TasksWithTokens), formatTokenCountOrNA(diff.HeadStats.McpSchemaTokens, diff.HeadStats.TasksWithTokens))
+		printTokenChangeWithCoverage(diff.BaseStats.McpSchemaTokens, diff.BaseStats.TasksWithTokens, diff.HeadStats.McpSchemaTokens, diff.HeadStats.TasksWithTokens)
+	}
 }
 
 func printChange(change float64) {
@@ -234,6 +246,99 @@ func printChange(change float64) {
 		_, _ = red.Printf("%.1f%%\n", change*100)
 	} else {
 		fmt.Println("0.0%")
+	}
+}
+
+func formatTokenCount(tokens int64) string {
+	abs := tokens
+	sign := ""
+	if tokens < 0 {
+		abs = -tokens
+		sign = "-"
+	}
+
+	if abs >= 1_000_000 {
+		return fmt.Sprintf("%s%.1fM", sign, float64(abs)/1_000_000)
+	}
+	if abs >= 1_000 {
+		return fmt.Sprintf("%s%.1fK", sign, float64(abs)/1_000)
+	}
+	return fmt.Sprintf("%d", tokens)
+}
+
+func printTokenChange(base, head int64) {
+	green := color.New(color.FgGreen)
+	red := color.New(color.FgRed)
+
+	diff := head - base
+	if base == 0 {
+		if head > 0 {
+			_, _ = red.Printf("+%s\n", formatTokenCount(head))
+		} else {
+			fmt.Println("-")
+		}
+		return
+	}
+
+	pctChange := float64(diff) / float64(base) * 100
+	if diff > 0 {
+		_, _ = red.Printf("+%s (+%.1f%%)\n", formatTokenCount(diff), pctChange)
+	} else if diff < 0 {
+		_, _ = green.Printf("%s (%.1f%%)\n", formatTokenCount(diff), pctChange)
+	} else {
+		fmt.Println("0")
+	}
+}
+
+// formatTokenCountOrNA returns "N/A" if no tasks have token data, otherwise formats the count.
+func formatTokenCountOrNA(tokens int64, tasksWithTokens int) string {
+	if tasksWithTokens == 0 {
+		return "N/A"
+	}
+	return formatTokenCount(tokens)
+}
+
+// printTokenChangeWithCoverage handles token change display when one or both sides may lack token data.
+func printTokenChangeWithCoverage(baseTokens int64, baseTasksWithTokens int, headTokens int64, headTasksWithTokens int) {
+	green := color.New(color.FgGreen)
+	red := color.New(color.FgRed)
+
+	// If neither has token data, nothing to compare
+	if baseTasksWithTokens == 0 && headTasksWithTokens == 0 {
+		fmt.Println("-")
+		return
+	}
+
+	// If only head has data, can't compare meaningfully
+	if baseTasksWithTokens == 0 {
+		fmt.Println("(no base data)")
+		return
+	}
+
+	// If only base has data, can't compare meaningfully
+	if headTasksWithTokens == 0 {
+		fmt.Println("(no head data)")
+		return
+	}
+
+	// Both have data, show normal comparison
+	diff := headTokens - baseTokens
+	if baseTokens == 0 {
+		if headTokens > 0 {
+			_, _ = red.Printf("+%s\n", formatTokenCount(headTokens))
+		} else {
+			fmt.Println("0")
+		}
+		return
+	}
+
+	pctChange := float64(diff) / float64(baseTokens) * 100
+	if diff > 0 {
+		_, _ = red.Printf("+%s (+%.1f%%)\n", formatTokenCount(diff), pctChange)
+	} else if diff < 0 {
+		_, _ = green.Printf("%s (%.1f%%)\n", formatTokenCount(diff), pctChange)
+	} else {
+		fmt.Println("0")
 	}
 }
 
@@ -253,6 +358,18 @@ func outputMarkdownDiff(diff DiffResult) {
 		diff.BaseStats.AssertionsPassed, diff.BaseStats.AssertionsTotal, diff.BaseStats.AssertionPassRate*100,
 		diff.HeadStats.AssertionsPassed, diff.HeadStats.AssertionsTotal, diff.HeadStats.AssertionPassRate*100,
 		formatChangeMarkdown(assertionChange))
+
+	// Token stats (only show if at least one side has token data)
+	if diff.BaseStats.TasksWithTokens > 0 || diff.HeadStats.TasksWithTokens > 0 {
+		fmt.Printf("| Tokens | %s | %s | %s |\n",
+			formatTokenCountOrNA(diff.BaseStats.TotalTokens, diff.BaseStats.TasksWithTokens),
+			formatTokenCountOrNA(diff.HeadStats.TotalTokens, diff.HeadStats.TasksWithTokens),
+			formatTokenChangeMarkdownWithCoverage(diff.BaseStats.TotalTokens, diff.BaseStats.TasksWithTokens, diff.HeadStats.TotalTokens, diff.HeadStats.TasksWithTokens))
+		fmt.Printf("| MCP Schema | %s | %s | %s |\n",
+			formatTokenCountOrNA(diff.BaseStats.McpSchemaTokens, diff.BaseStats.TasksWithTokens),
+			formatTokenCountOrNA(diff.HeadStats.McpSchemaTokens, diff.HeadStats.TasksWithTokens),
+			formatTokenChangeMarkdownWithCoverage(diff.BaseStats.McpSchemaTokens, diff.BaseStats.TasksWithTokens, diff.HeadStats.McpSchemaTokens, diff.HeadStats.TasksWithTokens))
+	}
 
 	// Regressions
 	if len(diff.Regressions) > 0 {
@@ -306,4 +423,43 @@ func formatChangeMarkdown(change float64) string {
 		return fmt.Sprintf("🔴 %.1f%%", change*100)
 	}
 	return "➖ 0.0%"
+}
+
+func formatTokenChangeMarkdown(base, head int64) string {
+	diff := head - base
+	if base == 0 {
+		if head > 0 {
+			return fmt.Sprintf("🔴 +%s", formatTokenCount(head))
+		}
+		return "➖"
+	}
+
+	pctChange := float64(diff) / float64(base) * 100
+	if diff > 0 {
+		return fmt.Sprintf("🔴 +%s (+%.1f%%)", formatTokenCount(diff), pctChange)
+	} else if diff < 0 {
+		return fmt.Sprintf("🟢 %s (%.1f%%)", formatTokenCount(diff), pctChange)
+	}
+	return "➖ 0"
+}
+
+// formatTokenChangeMarkdownWithCoverage handles token change display when one or both sides may lack token data.
+func formatTokenChangeMarkdownWithCoverage(baseTokens int64, baseTasksWithTokens int, headTokens int64, headTasksWithTokens int) string {
+	// If neither has token data, nothing to compare
+	if baseTasksWithTokens == 0 && headTasksWithTokens == 0 {
+		return "➖"
+	}
+
+	// If only head has data, can't compare meaningfully
+	if baseTasksWithTokens == 0 {
+		return "(no base data)"
+	}
+
+	// If only base has data, can't compare meaningfully
+	if headTasksWithTokens == 0 {
+		return "(no head data)"
+	}
+
+	// Both have data, show normal comparison
+	return formatTokenChangeMarkdown(baseTokens, headTokens)
 }
