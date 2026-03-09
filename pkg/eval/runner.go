@@ -32,6 +32,8 @@ type EvalResult struct {
 	AgentExecutionError bool                      `json:"agentExecutionError,omitempty"` // True if agent failed to execute
 	Difficulty          string                    `json:"difficulty"`
 	Parallel            bool                      `json:"parallel,omitempty"`
+	RunIndex            int                       `json:"runIndex,omitempty"`  // 0-indexed run number (for multi-run)
+	TotalRuns           int                       `json:"totalRuns,omitempty"` // Total runs for this task (for multi-run)
 	AssertionResults    *CompositeAssertionResult `json:"assertionResults"`
 	AllAssertionsPassed bool                      `json:"allAssertionsPassed"`
 	CallHistory         *mcpproxy.CallHistory     `json:"callHistory"`
@@ -57,13 +59,17 @@ type EvalRunner interface {
 
 // RunnerOptions configures the eval runner behavior
 type RunnerOptions struct {
-	ParallelWorkers int
+	ParallelWorkers   int
+	Runs              int  // Number of times to run each task (default: 1)
+	RunsExplicitlySet bool // True if Runs was explicitly set via CLI (overrides task-level runs)
 }
 
 type evalRunner struct {
-	spec             *EvalSpec
-	progressCallback ProgressCallback
-	parallelWorkers  int
+	spec              *EvalSpec
+	progressCallback  ProgressCallback
+	parallelWorkers   int
+	runs              int
+	runsExplicitlySet bool
 }
 
 var _ EvalRunner = &evalRunner{}
@@ -81,14 +87,24 @@ func NewRunner(spec *EvalSpec, opts ...RunnerOptions) (EvalRunner, error) {
 	}
 
 	workers := 1
-	if len(opts) > 0 && opts[0].ParallelWorkers > 0 {
-		workers = opts[0].ParallelWorkers
+	runs := 1
+	runsExplicitlySet := false
+	if len(opts) > 0 {
+		if opts[0].ParallelWorkers > 0 {
+			workers = opts[0].ParallelWorkers
+		}
+		if opts[0].Runs > 0 {
+			runs = opts[0].Runs
+		}
+		runsExplicitlySet = opts[0].RunsExplicitlySet
 	}
 
 	return &evalRunner{
-		spec:             spec,
-		progressCallback: NoopProgressCallback,
-		parallelWorkers:  workers,
+		spec:              spec,
+		progressCallback:  NoopProgressCallback,
+		parallelWorkers:   workers,
+		runs:              runs,
+		runsExplicitlySet: runsExplicitlySet,
 	}, nil
 }
 
@@ -339,13 +355,13 @@ func (r *evalRunner) runTaskGroup(
 	tasks []taskConfig,
 	workerLimit int,
 ) []*EvalResult {
-	results := make([]*EvalResult, len(tasks))
+	var allResults []*EvalResult
 	var mu sync.Mutex
 
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, workerLimit)
 
-	for i, tc := range tasks {
+	for _, tc := range tasks {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -354,30 +370,56 @@ func (r *evalRunner) runTaskGroup(
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			result := r.executeTask(ctx, agentRunner, mcpConfig, extResolver, tc)
+			taskResults := r.executeTask(ctx, agentRunner, mcpConfig, extResolver, tc)
 
 			mu.Lock()
-			results[i] = result
+			allResults = append(allResults, taskResults...)
 			mu.Unlock()
 		}()
 	}
 
 	wg.Wait()
 
-	// Filter out nil results (shouldn't happen, but be defensive)
-	var finalResults []*EvalResult
-	for _, res := range results {
-		if res != nil {
-			finalResults = append(finalResults, res)
-		}
-	}
-
-	return finalResults
+	return allResults
 }
 
-// executeTask runs a single task with its own isolated MCP and extension managers.
-// Always returns a result, even on error.
+// getRunsForTask determines the number of runs for a specific task.
+// Priority: CLI --runs (if explicitly set) > task metadata runs > default (1)
+func (r *evalRunner) getRunsForTask(tc taskConfig) int {
+	if r.runsExplicitlySet {
+		return r.runs
+	}
+	if tc.spec.Metadata.Runs > 0 {
+		return tc.spec.Metadata.Runs
+	}
+	return 1
+}
+
+// executeTask runs a task for the configured number of runs.
+// Returns a slice of results, one per run.
 func (r *evalRunner) executeTask(
+	ctx context.Context,
+	agentRunner agent.Runner,
+	mcpConfig *mcpclient.MCPConfig,
+	extResolver resolver.Resolver,
+	tc taskConfig,
+) []*EvalResult {
+	runs := r.getRunsForTask(tc)
+	results := make([]*EvalResult, 0, runs)
+
+	for runIdx := 0; runIdx < runs; runIdx++ {
+		result := r.executeSingleRun(ctx, agentRunner, mcpConfig, extResolver, tc)
+		result.RunIndex = runIdx
+		result.TotalRuns = runs
+		results = append(results, result)
+	}
+
+	return results
+}
+
+// executeSingleRun runs a single task execution with its own isolated MCP and extension managers.
+// Always returns a result, even on error.
+func (r *evalRunner) executeSingleRun(
 	ctx context.Context,
 	agentRunner agent.Runner,
 	mcpConfig *mcpclient.MCPConfig,

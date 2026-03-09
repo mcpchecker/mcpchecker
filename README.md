@@ -322,6 +322,42 @@ Keep tasks sequential (default) when:
 - Tasks share state or resources
 - One task depends on the output of another
 
+## Multi-Run Execution
+
+For consistency testing, you can run each task multiple times. This helps measure how reliably an agent completes a task.
+
+### Task-Level Configuration
+
+Set the `runs` field in task metadata:
+
+```yaml
+kind: Task
+metadata:
+  name: "fix-crashloop"
+  difficulty: medium
+  parallel: true
+  runs: 4  # Run this task 4 times
+```
+
+### CLI Override
+
+Use `-n/--runs` to override task-level runs for all tasks:
+
+```bash
+# Run each task 5 times (overrides task-level runs)
+mcpchecker check eval.yaml -n 5
+
+# Use task-level runs (default)
+mcpchecker check eval.yaml
+```
+
+### Results
+
+When running multiple times:
+- Each run gets its own setup → agent → verify → cleanup cycle
+- Progress shows `[run X/N]` for each run
+- Summary shows per-task pass rate (e.g., "2/3 (66.7%)")
+
 ## Assertions
 
 Validate agent behavior:
@@ -665,6 +701,7 @@ Options:
 - `-r, --run` - Regular expression to filter task names
 - `-l, --label-selector` - Filter tasks by label (e.g., "suite=kubernetes")
 - `-p, --parallel` - Number of parallel workers for tasks marked as parallel (default: 1)
+- `-n, --runs` - Number of times to run each task for consistency testing (default: 1, uses task-level runs if not specified)
 
 ### `mcpchecker summary`
 Display a summary of evaluation results:

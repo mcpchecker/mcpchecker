@@ -374,28 +374,58 @@ func TestNewRunnerWithOptions(t *testing.T) {
 	}
 
 	tests := map[string]struct {
-		opts            []RunnerOptions
-		expectedWorkers int
+		opts                     []RunnerOptions
+		expectedWorkers          int
+		expectedRuns             int
+		expectedRunsExplicitlySet bool
 	}{
 		"no options - defaults to 1": {
-			opts:            nil,
-			expectedWorkers: 1,
+			opts:                     nil,
+			expectedWorkers:          1,
+			expectedRuns:             1,
+			expectedRunsExplicitlySet: false,
 		},
 		"empty options - defaults to 1": {
-			opts:            []RunnerOptions{{}},
-			expectedWorkers: 1,
+			opts:                     []RunnerOptions{{}},
+			expectedWorkers:          1,
+			expectedRuns:             1,
+			expectedRunsExplicitlySet: false,
 		},
 		"zero workers - defaults to 1": {
-			opts:            []RunnerOptions{{ParallelWorkers: 0}},
-			expectedWorkers: 1,
+			opts:                     []RunnerOptions{{ParallelWorkers: 0}},
+			expectedWorkers:          1,
+			expectedRuns:             1,
+			expectedRunsExplicitlySet: false,
 		},
 		"negative workers - defaults to 1": {
-			opts:            []RunnerOptions{{ParallelWorkers: -5}},
-			expectedWorkers: 1,
+			opts:                     []RunnerOptions{{ParallelWorkers: -5}},
+			expectedWorkers:          1,
+			expectedRuns:             1,
+			expectedRunsExplicitlySet: false,
 		},
 		"valid workers": {
-			opts:            []RunnerOptions{{ParallelWorkers: 4}},
-			expectedWorkers: 4,
+			opts:                     []RunnerOptions{{ParallelWorkers: 4}},
+			expectedWorkers:          4,
+			expectedRuns:             1,
+			expectedRunsExplicitlySet: false,
+		},
+		"valid runs": {
+			opts:                     []RunnerOptions{{Runs: 5}},
+			expectedWorkers:          1,
+			expectedRuns:             5,
+			expectedRunsExplicitlySet: false,
+		},
+		"runs explicitly set": {
+			opts:                     []RunnerOptions{{Runs: 3, RunsExplicitlySet: true}},
+			expectedWorkers:          1,
+			expectedRuns:             3,
+			expectedRunsExplicitlySet: true,
+		},
+		"all options set": {
+			opts:                     []RunnerOptions{{ParallelWorkers: 4, Runs: 5, RunsExplicitlySet: true}},
+			expectedWorkers:          4,
+			expectedRuns:             5,
+			expectedRunsExplicitlySet: true,
 		},
 	}
 
@@ -406,6 +436,8 @@ func TestNewRunnerWithOptions(t *testing.T) {
 
 			r := runner.(*evalRunner)
 			assert.Equal(t, tc.expectedWorkers, r.parallelWorkers)
+			assert.Equal(t, tc.expectedRuns, r.runs)
+			assert.Equal(t, tc.expectedRunsExplicitlySet, r.runsExplicitlySet)
 		})
 	}
 }
@@ -506,6 +538,71 @@ func TestGroupTasksByParallelSupport(t *testing.T) {
 				lastGroup := groups[len(groups)-1]
 				require.True(t, lastGroup.parallel, "parallel group should be last")
 			}
+		})
+	}
+}
+
+func TestGetRunsForTask(t *testing.T) {
+	makeTask := func(runs int) taskConfig {
+		return taskConfig{
+			path: "test.yaml",
+			spec: &task.TaskConfig{
+				Metadata: task.TaskMetadata{
+					Name: "test-task",
+					Runs: runs,
+				},
+			},
+		}
+	}
+
+	tests := map[string]struct {
+		runnerRuns        int
+		runsExplicitlySet bool
+		taskRuns          int
+		expected          int
+	}{
+		"default - no CLI, no task runs": {
+			runnerRuns:        1,
+			runsExplicitlySet: false,
+			taskRuns:          0,
+			expected:          1,
+		},
+		"task has runs, CLI not set": {
+			runnerRuns:        1,
+			runsExplicitlySet: false,
+			taskRuns:          3,
+			expected:          3,
+		},
+		"CLI explicitly set, task has no runs": {
+			runnerRuns:        5,
+			runsExplicitlySet: true,
+			taskRuns:          0,
+			expected:          5,
+		},
+		"CLI explicitly set overrides task runs": {
+			runnerRuns:        5,
+			runsExplicitlySet: true,
+			taskRuns:          3,
+			expected:          5,
+		},
+		"CLI explicitly set to 1 overrides task runs": {
+			runnerRuns:        1,
+			runsExplicitlySet: true,
+			taskRuns:          3,
+			expected:          1,
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			runner := &evalRunner{
+				runs:              tc.runnerRuns,
+				runsExplicitlySet: tc.runsExplicitlySet,
+			}
+			task := makeTask(tc.taskRuns)
+
+			result := runner.getRunsForTask(task)
+			assert.Equal(t, tc.expected, result)
 		})
 	}
 }

@@ -35,6 +35,8 @@ steps:
 | `name` | string | Yes | Unique identifier for the task |
 | `difficulty` | string | Yes | One of: `"easy"`, `"medium"`, `"hard"` |
 | `labels` | map[string]string | No | Key-value labels for categorizing and filtering tasks |
+| `parallel` | bool | No | If true, task can run in parallel with other parallel tasks (default: false) |
+| `runs` | int | No | Number of times to run this task for consistency testing (default: 1) |
 
 ## steps Fields
 

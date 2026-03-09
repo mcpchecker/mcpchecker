@@ -31,6 +31,7 @@ type TaskMetadata struct {
 	Difficulty string            `json:"difficulty"`
 	Labels     map[string]string `json:"labels,omitempty"`
 	Parallel   bool              `json:"parallel,omitempty"`
+	Runs       int               `json:"runs,omitempty"` // Number of times to run this task (default: 1)
 }
 
 type TaskSpec struct {

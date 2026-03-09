@@ -3,6 +3,7 @@ metadata:
   name: "fix-crashloop"
   difficulty: medium
   parallel: true
+  runs: 4
 steps:
   setup:
     file: setup.sh

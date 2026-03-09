@@ -27,6 +27,7 @@ metadata:
   name: string        # Required. Unique task identifier.
   difficulty: string  # Optional. One of: easy, medium, hard.
   parallel: bool      # Optional. If true, task can run in parallel with other parallel tasks.
+  runs: int           # Optional. Number of times to run this task (default: 1). Useful for consistency testing.
 
 spec:
   requires:           # Optional. Extension requirements.
@@ -272,6 +273,37 @@ When running mcpchecker with `--parallel N` (where N > 1):
 2. Parallel tasks run together as a batch, with up to N concurrent workers
 
 Mark a task as parallel when it is independent and doesn't share state with other tasks. Keep the default (`parallel: false`) for tasks that must run in order or depend on each other.
+
+## Multi-Run Execution
+
+Tasks can specify the number of times they should run using the `runs` metadata field. This is useful for consistency testing to measure how reliably an agent can complete a task.
+
+```yaml
+kind: Task
+apiVersion: mcpchecker/v1alpha2
+metadata:
+  name: fix-crashloop
+  difficulty: medium
+  parallel: true
+  runs: 4  # Run this task 4 times
+```
+
+Each run executes the full task lifecycle independently: setup → agent → verify → cleanup. Results include per-run pass/fail status and an aggregated pass rate.
+
+### Priority
+
+The number of runs is determined by:
+1. CLI `-n/--runs` flag (if explicitly set) - overrides task-level runs
+2. Task metadata `runs` field - used when CLI is not specified
+3. Default: 1 run
+
+```bash
+# Use task-level runs (4 runs for fix-crashloop)
+mcpchecker check eval.yaml
+
+# Override to run each task 10 times
+mcpchecker check eval.yaml --runs 10
+```
 
 ## Complete Example
 

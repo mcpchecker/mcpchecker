@@ -23,6 +23,7 @@ func NewEvalCmd() *cobra.Command {
 	var run string
 	var labelSelector string
 	var parallelWorkers int
+	var runs int
 
 	cmd := &cobra.Command{
 		Use:   "check [eval-config-file]",
@@ -48,7 +49,9 @@ func NewEvalCmd() *cobra.Command {
 
 			// Create runner
 			runner, err := eval.NewRunner(spec, eval.RunnerOptions{
-				ParallelWorkers: parallelWorkers,
+				ParallelWorkers:   parallelWorkers,
+				Runs:              runs,
+				RunsExplicitlySet: cmd.Flags().Changed("runs"),
 			})
 			if err != nil {
 				return fmt.Errorf("failed to create eval runner: %w", err)
@@ -94,6 +97,7 @@ func NewEvalCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&run, "run", "r", "", "Regular expression to match task names to run (unanchored, like go test -run)")
 	cmd.Flags().StringVarP(&labelSelector, "label-selector", "l", "", "Filter taskSets by label (format: key=value, e.g., suite=kubernetes)")
 	cmd.Flags().IntVarP(&parallelWorkers, "parallel", "p", 1, "Number of parallel workers for tasks marked as parallel (1 = sequential)")
+	cmd.Flags().IntVarP(&runs, "runs", "n", 1, "Number of times to run each task (for consistency testing)")
 
 	return cmd
 }
@@ -140,14 +144,18 @@ func (d *progressDisplay) handleProgress(event eval.ProgressEvent) {
 
 	case eval.EventTaskStart:
 		fmt.Println()
+		runInfo := ""
+		if event.Task.TotalRuns > 1 {
+			runInfo = fmt.Sprintf(" [run %d/%d]", event.Task.RunIndex+1, event.Task.TotalRuns)
+		}
 		if event.Task.Parallel {
 			if event.Task.Difficulty != "" {
-				d.cyan.Printf("[%s] Starting (parallel, %s)\n", event.Task.TaskName, event.Task.Difficulty)
+				d.cyan.Printf("[%s]%s Starting (parallel, %s)\n", event.Task.TaskName, runInfo, event.Task.Difficulty)
 			} else {
-				d.cyan.Printf("[%s] Starting (parallel)\n", event.Task.TaskName)
+				d.cyan.Printf("[%s]%s Starting (parallel)\n", event.Task.TaskName, runInfo)
 			}
 		} else {
-			d.cyan.Printf("Task: %s\n", event.Task.TaskName)
+			d.cyan.Printf("Task: %s%s\n", event.Task.TaskName, runInfo)
 			if event.Task.Difficulty != "" {
 				fmt.Printf("  Difficulty: %s\n", event.Task.Difficulty)
 			}
@@ -358,6 +366,9 @@ func displayTextResults(results []*eval.EvalResult) error {
 	bold.Println("=== Statistics by Difficulty ===")
 	displayStatsByDifficulty(results, green, yellow)
 
+	// Show consistency summary for multi-run
+	displayConsistencySummary(results)
+
 	return nil
 }
 
@@ -534,4 +545,63 @@ func formatDuration(d time.Duration) string {
 	hours := minutes / 60
 	minutes = minutes % 60
 	return fmt.Sprintf("%dh%dm%ds", hours, minutes, seconds)
+}
+
+// displayConsistencySummary shows pass rates when tasks are run multiple times
+func displayConsistencySummary(results []*eval.EvalResult) {
+	// Check if any task has multiple runs
+	hasMultiRun := false
+	for _, r := range results {
+		if r.TotalRuns > 1 {
+			hasMultiRun = true
+			break
+		}
+	}
+
+	if !hasMultiRun {
+		return
+	}
+
+	bold := color.New(color.Bold)
+	green := color.New(color.FgGreen)
+	yellow := color.New(color.FgYellow)
+
+	// Aggregate by task path
+	type taskAgg struct {
+		taskName  string
+		passCount int
+		totalRuns int
+	}
+	agg := make(map[string]*taskAgg)
+
+	for _, r := range results {
+		key := r.TaskPath
+		if agg[key] == nil {
+			agg[key] = &taskAgg{taskName: r.TaskName}
+		}
+		a := agg[key]
+		a.totalRuns++
+		if r.TaskPassed {
+			a.passCount++
+		}
+	}
+
+	fmt.Println()
+	bold.Println("=== Consistency Summary ===")
+	fmt.Printf("%-40s %s\n", "Task", "Pass Rate")
+	fmt.Println(strings.Repeat("-", 55))
+
+	for _, a := range agg {
+		passRate := float64(a.passCount) / float64(a.totalRuns) * 100
+		status := fmt.Sprintf("%d/%d (%.1f%%)", a.passCount, a.totalRuns, passRate)
+		if a.passCount == a.totalRuns {
+			fmt.Printf("%-40s ", a.taskName)
+			green.Printf("%s\n", status)
+		} else if a.passCount == 0 {
+			fmt.Printf("%-40s ", a.taskName)
+			yellow.Printf("%s\n", status)
+		} else {
+			fmt.Printf("%-40s %s\n", a.taskName, status)
+		}
+	}
 }
