@@ -54,7 +54,7 @@ func TestMcpToolInfo(t *testing.T) {
 				name:        "test-tool",
 				description: "A test tool",
 				params:      map[string]any{},
-				required:    nil,
+				required:    []string{},
 			},
 		},
 		"tool with properties and required fields": {
@@ -97,8 +97,9 @@ func TestMcpToolInfo(t *testing.T) {
 				params      map[string]any
 				required    []string
 			}{
-				name:   "simple-tool",
-				params: map[string]any{},
+				name:     "simple-tool",
+				params:   map[string]any{},
+				required: []string{},
 			},
 		},
 		"tool with non-map schema is ignored": {
@@ -112,8 +113,9 @@ func TestMcpToolInfo(t *testing.T) {
 				params      map[string]any
 				required    []string
 			}{
-				name:   "odd-schema",
-				params: map[string]any{},
+				name:     "odd-schema",
+				params:   map[string]any{},
+				required: []string{},
 			},
 		},
 		"required with non-string entries are skipped": {

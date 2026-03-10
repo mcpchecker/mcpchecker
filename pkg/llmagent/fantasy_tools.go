@@ -69,6 +69,9 @@ func (t *mcpTool) Info() fantasy.ToolInfo {
 	if info.Parameters == nil {
 		info.Parameters = map[string]any{}
 	}
+	if info.Required == nil {
+		info.Required = []string{}
+	}
 
 	return info
 }
