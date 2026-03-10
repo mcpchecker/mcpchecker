@@ -1,0 +1,94 @@
+name: 'Run mcpchecker Diff'
+description: 'Compare MCP evaluation results to detect regressions and improvements'
+author: 'mcpchecker'
+
+inputs:
+  base-results:
+    description: 'Path to baseline results file'
+    required: true
+
+  current-results:
+    description: 'Path to current results file'
+    required: true
+
+  mcpchecker-version:
+    description: 'Version of mcpchecker to use (latest, main, or vX.Y.Z)'
+    required: false
+    default: 'latest'
+
+  working-directory:
+    description: 'Working directory for running diff'
+    required: false
+    default: '.'
+
+outputs:
+  diff-output:
+    description: 'The diff output in markdown format (for use in PR comments)'
+    value: ${{ steps.run-diff.outputs.diff-output }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Determine version
+      id: version
+      shell: bash
+      run: |
+        VERSION="${{ inputs.mcpchecker-version }}"
+        if [ "$VERSION" = "latest" ] || [ -z "$VERSION" ]; then
+          ACTION_REF="${{ github.action_ref }}"
+          if [[ "$ACTION_REF" =~ ^v[0-9] ]]; then
+            VERSION="$ACTION_REF"
+            echo "Using version from action ref: $VERSION"
+          else
+            VERSION="latest"
+          fi
+        fi
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+    - name: Setup mcpchecker
+      id: setup
+      uses: mcpchecker/mcpchecker/.github/actions/setup-mcpchecker@main
+      with:
+        version: ${{ steps.version.outputs.version }}
+
+    - name: Run diff
+      id: run-diff
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        MCPCHECKER="${{ steps.setup.outputs.mcpchecker-path }}"
+        BASE="${{ inputs.base-results }}"
+        CURRENT="${{ inputs.current-results }}"
+
+        # Validate input files exist
+        if [ ! -f "$BASE" ]; then
+          echo "Error: Base results file not found: $BASE"
+          exit 1
+        fi
+        if [ ! -f "$CURRENT" ]; then
+          echo "Error: Current results file not found: $CURRENT"
+          exit 1
+        fi
+
+        echo "=== Comparing Results ==="
+        echo "Base: $BASE"
+        echo "Current: $CURRENT"
+        echo ""
+
+        # Capture diff output
+        DIFF_OUTPUT=$("$MCPCHECKER" diff --base "$BASE" --current "$CURRENT" --output markdown)
+
+        # Display and write to step summary
+        echo "$DIFF_OUTPUT"
+        echo "$DIFF_OUTPUT" >> $GITHUB_STEP_SUMMARY
+
+        # Set as output for PR comments
+        {
+          echo "diff-output<<MCPCHECKER_DIFF_EOF"
+          echo "$DIFF_OUTPUT"
+          echo "MCPCHECKER_DIFF_EOF"
+        } >> $GITHUB_OUTPUT
+
+branding:
+  icon: 'git-compare'
+  color: 'blue'
