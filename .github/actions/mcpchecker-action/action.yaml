@@ -115,28 +115,12 @@ outputs:
 runs:
   using: 'composite'
   steps:
-    - name: Determine version
-      id: version
-      shell: bash
-      run: |
-        VERSION="${{ inputs.mcpchecker-version }}"
-        # If version is 'latest' or unset and action was invoked with a version tag, use that
-        if [ "$VERSION" = "latest" ] || [ -z "$VERSION" ]; then
-          ACTION_REF="${{ github.action_ref }}"
-          if [[ "$ACTION_REF" =~ ^v[0-9] ]]; then
-            VERSION="$ACTION_REF"
-            echo "Using version from action ref: $VERSION"
-          else
-            VERSION="latest"
-          fi
-        fi
-        echo "version=$VERSION" >> $GITHUB_OUTPUT
-
     - name: Setup mcpchecker
       id: setup
       uses: mcpchecker/mcpchecker/.github/actions/setup-mcpchecker@main
       with:
-        version: ${{ steps.version.outputs.version }}
+        version: ${{ inputs.mcpchecker-version }}
+        action-ref: ${{ github.action_ref }}
 
     - name: Run evaluation
       id: run-eval

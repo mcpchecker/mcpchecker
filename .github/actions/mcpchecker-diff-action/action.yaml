@@ -26,40 +26,29 @@ outputs:
     description: 'The diff output in markdown format (for use in PR comments)'
     value: ${{ steps.run-diff.outputs.diff-output }}
 
+  exit-code:
+    description: 'Exit code from the diff command'
+    value: ${{ steps.run-diff.outputs.exit-code }}
+
 runs:
   using: 'composite'
   steps:
-    - name: Determine version
-      id: version
-      shell: bash
-      run: |
-        VERSION="${{ inputs.mcpchecker-version }}"
-        if [ "$VERSION" = "latest" ] || [ -z "$VERSION" ]; then
-          ACTION_REF="${{ github.action_ref }}"
-          if [[ "$ACTION_REF" =~ ^v[0-9] ]]; then
-            VERSION="$ACTION_REF"
-            echo "Using version from action ref: $VERSION"
-          else
-            VERSION="latest"
-          fi
-        fi
-        echo "version=$VERSION" >> $GITHUB_OUTPUT
-
     - name: Setup mcpchecker
       id: setup
       uses: mcpchecker/mcpchecker/.github/actions/setup-mcpchecker@main
       with:
-        version: ${{ steps.version.outputs.version }}
+        version: ${{ inputs.mcpchecker-version }}
+        action-ref: ${{ github.action_ref }}
 
     - name: Run diff
       id: run-diff
       shell: bash
       working-directory: ${{ inputs.working-directory }}
+      env:
+        MCPCHECKER: ${{ steps.setup.outputs.mcpchecker-path }}
+        BASE: ${{ inputs.base-results }}
+        CURRENT: ${{ inputs.current-results }}
       run: |
-        MCPCHECKER="${{ steps.setup.outputs.mcpchecker-path }}"
-        BASE="${{ inputs.base-results }}"
-        CURRENT="${{ inputs.current-results }}"
-
         # Validate input files exist
         if [ ! -f "$BASE" ]; then
           echo "Error: Base results file not found: $BASE"
@@ -76,13 +65,17 @@ runs:
         echo ""
 
         # Capture diff output
+        set +e
         DIFF_OUTPUT=$("$MCPCHECKER" diff --base "$BASE" --current "$CURRENT" --output markdown)
+        DIFF_EXIT=$?
+        set -e
 
         # Display and write to step summary
         echo "$DIFF_OUTPUT"
         echo "$DIFF_OUTPUT" >> $GITHUB_STEP_SUMMARY
 
-        # Set as output for PR comments
+        # Set outputs for PR comments
+        echo "exit-code=$DIFF_EXIT" >> $GITHUB_OUTPUT
         {
           echo "diff-output<<MCPCHECKER_DIFF_EOF"
           echo "$DIFF_OUTPUT"

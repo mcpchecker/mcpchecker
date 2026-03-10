@@ -8,6 +8,11 @@ inputs:
     required: false
     default: 'latest'
 
+  action-ref:
+    description: 'The github.action_ref from the calling action (used to auto-detect version from action tag)'
+    required: false
+    default: ''
+
 outputs:
   mcpchecker-path:
     description: 'Path to the installed mcpchecker binary'
@@ -24,6 +29,24 @@ outputs:
 runs:
   using: 'composite'
   steps:
+    - name: Resolve version
+      id: resolve-version
+      shell: bash
+      run: |
+        VERSION="${{ inputs.version }}"
+        # If version is 'latest' or unset and action-ref looks like a version tag, use that
+        if [ "$VERSION" = "latest" ] || [ -z "$VERSION" ]; then
+          ACTION_REF="${{ inputs.action-ref }}"
+          # Only accept full semver tags (vMAJOR.MINOR.PATCH), not floating tags like v1 or v1.2
+          if [[ "$ACTION_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            VERSION="$ACTION_REF"
+            echo "Using version from action ref: $VERSION"
+          else
+            VERSION="latest"
+          fi
+        fi
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+
     - name: Detect platform
       id: platform
       shell: bash
@@ -93,7 +116,7 @@ runs:
         MCPCHECKER_BIN="$INSTALL_DIR/mcpchecker$BIN_EXT"
         AGENT_BIN="$INSTALL_DIR/agent$BIN_EXT"
 
-        VERSION="${{ inputs.version }}"
+        VERSION="${{ steps.resolve-version.outputs.version }}"
         echo "Requested version: $VERSION"
 
         # Map 'latest' and 'main' to nightly release
