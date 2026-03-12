@@ -299,6 +299,9 @@ func (r *evalRunner) collectTaskConfigs(rx *regexp.Regexp) ([]taskConfig, error)
 				canonicalPath = resolved
 			}
 
+			// Keep display path clean but relative (avoids leaking machine-specific paths in results)
+			displayPath := filepath.Clean(path)
+
 			// If task already exists, append assertions to evaluate independently
 			if idx, exists := seen[canonicalPath]; exists {
 				if ts.Assertions != nil {
@@ -313,7 +316,7 @@ func (r *evalRunner) collectTaskConfigs(rx *regexp.Regexp) ([]taskConfig, error)
 				assertions = []*TaskAssertions{ts.Assertions}
 			}
 			taskConfigs = append(taskConfigs, taskConfig{
-				path:       canonicalPath,
+				path:       displayPath,
 				spec:       taskSpec,
 				assertions: assertions,
 			})
