@@ -2,6 +2,7 @@ package eval
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
 	"time"
 
@@ -1475,6 +1476,144 @@ func TestMatchesPromptAssertion(t *testing.T) {
 
 func intPtr(i int) *int {
 	return &i
+}
+
+func TestCompositeAssertionResult_Merge(t *testing.T) {
+	passed := &SingleAssertionResult{Passed: true}
+	failed := &SingleAssertionResult{Passed: false, Reason: "failed"}
+
+	t.Run("nil receiver returns other", func(t *testing.T) {
+		var c *CompositeAssertionResult
+		other := &CompositeAssertionResult{ToolsUsed: passed}
+		result := c.Merge(other)
+		assert.Equal(t, other, result)
+	})
+
+	t.Run("nil other returns receiver", func(t *testing.T) {
+		c := &CompositeAssertionResult{ToolsUsed: passed}
+		result := c.Merge(nil)
+		assert.Equal(t, c, result)
+	})
+
+	t.Run("merges all fields", func(t *testing.T) {
+		a := &CompositeAssertionResult{
+			ToolsUsed:    passed,
+			RequireAny:   passed,
+			ToolsNotUsed: passed,
+		}
+		b := &CompositeAssertionResult{
+			MinToolCalls:     passed,
+			MaxToolCalls:     passed,
+			ResourcesRead:    passed,
+			ResourcesNotRead: passed,
+			PromptsUsed:      passed,
+			PromptsNotUsed:   passed,
+			CallOrder:        passed,
+			NoDuplicateCalls: passed,
+		}
+		result := a.Merge(b)
+
+		assert.Equal(t, passed, result.ToolsUsed)
+		assert.Equal(t, passed, result.RequireAny)
+		assert.Equal(t, passed, result.ToolsNotUsed)
+		assert.Equal(t, passed, result.MinToolCalls)
+		assert.Equal(t, passed, result.MaxToolCalls)
+		assert.Equal(t, passed, result.ResourcesRead)
+		assert.Equal(t, passed, result.ResourcesNotRead)
+		assert.Equal(t, passed, result.PromptsUsed)
+		assert.Equal(t, passed, result.PromptsNotUsed)
+		assert.Equal(t, passed, result.CallOrder)
+		assert.Equal(t, passed, result.NoDuplicateCalls)
+	})
+
+	t.Run("failure takes precedence over pass", func(t *testing.T) {
+		a := &CompositeAssertionResult{ToolsUsed: passed}
+		b := &CompositeAssertionResult{ToolsUsed: failed}
+		result := a.Merge(b)
+		assert.Equal(t, failed, result.ToolsUsed)
+
+		// Also test reverse order
+		result2 := b.Merge(a)
+		assert.Equal(t, failed, result2.ToolsUsed)
+	})
+
+	t.Run("both failures combines into details", func(t *testing.T) {
+		failedA := &SingleAssertionResult{Passed: false, Reason: "reason A"}
+		failedB := &SingleAssertionResult{Passed: false, Reason: "reason B"}
+		a := &CompositeAssertionResult{ToolsUsed: failedA}
+		b := &CompositeAssertionResult{ToolsUsed: failedB}
+
+		result := a.Merge(b)
+
+		assert.False(t, result.ToolsUsed.Passed)
+		assert.Equal(t, "multiple assertion failures", result.ToolsUsed.Reason)
+		assert.Equal(t, []string{"reason A", "reason B"}, result.ToolsUsed.Details)
+	})
+
+	t.Run("both failures with existing details combines all", func(t *testing.T) {
+		failedA := &SingleAssertionResult{
+			Passed:  false,
+			Reason:  "reason A",
+			Details: []string{"detail A1", "detail A2"},
+		}
+		failedB := &SingleAssertionResult{
+			Passed:  false,
+			Reason:  "reason B",
+			Details: []string{"detail B1"},
+		}
+		a := &CompositeAssertionResult{ToolsUsed: failedA}
+		b := &CompositeAssertionResult{ToolsUsed: failedB}
+
+		result := a.Merge(b)
+
+		assert.False(t, result.ToolsUsed.Passed)
+		assert.Equal(t, "multiple assertion failures", result.ToolsUsed.Reason)
+		assert.Equal(t, []string{"reason A", "detail A1", "detail A2", "reason B", "detail B1"}, result.ToolsUsed.Details)
+	})
+
+	t.Run("both failures with empty reason skips empty", func(t *testing.T) {
+		failedA := &SingleAssertionResult{Passed: false, Reason: "reason A"}
+		failedB := &SingleAssertionResult{Passed: false, Reason: ""}
+		a := &CompositeAssertionResult{ToolsUsed: failedA}
+		b := &CompositeAssertionResult{ToolsUsed: failedB}
+
+		result := a.Merge(b)
+
+		assert.Equal(t, []string{"reason A"}, result.ToolsUsed.Details)
+	})
+
+	t.Run("all struct fields are handled by Merge", func(t *testing.T) {
+		// This test uses reflection to ensure Merge handles all fields.
+		// If a new field is added to CompositeAssertionResult, this test will fail
+		// unless Merge is updated to handle it.
+		typ := reflect.TypeOf(CompositeAssertionResult{})
+
+		// Create two structs: 'a' with all fields set, 'b' empty
+		a := &CompositeAssertionResult{}
+		b := &CompositeAssertionResult{}
+		aVal := reflect.ValueOf(a).Elem()
+
+		for i := 0; i < typ.NumField(); i++ {
+			field := typ.Field(i)
+			if field.Type != reflect.TypeOf((*SingleAssertionResult)(nil)) {
+				t.Fatalf("unexpected field type for %s: %v (Merge may need updating)", field.Name, field.Type)
+			}
+			// Set field in 'a' to a passed result
+			aVal.Field(i).Set(reflect.ValueOf(&SingleAssertionResult{Passed: true, Reason: field.Name}))
+		}
+
+		result := a.Merge(b)
+		resultVal := reflect.ValueOf(result).Elem()
+
+		// Verify all fields were merged (should have 'a' values since 'b' is all nil)
+		for i := 0; i < typ.NumField(); i++ {
+			field := typ.Field(i)
+			fieldVal := resultVal.Field(i)
+			if fieldVal.IsNil() {
+				t.Errorf("field %s was not merged (is nil in result)", field.Name)
+			}
+		}
+	})
 }
 
 func TestNewCompositeAssertionEvaluator(t *testing.T) {

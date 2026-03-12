@@ -716,3 +716,63 @@ func matchesPromptAssertion(call *mcpproxy.PromptGet, assertion PromptAssertion)
 
 	return false
 }
+
+// Merge combines results from another CompositeAssertionResult.
+// For each field, if either result has a value, the merged result uses the first non-nil.
+// If both have values and both failed, the failure messages are combined into Details.
+// If only one failed, that failure is returned.
+func (c *CompositeAssertionResult) Merge(other *CompositeAssertionResult) *CompositeAssertionResult {
+	if c == nil {
+		return other
+	}
+	if other == nil {
+		return c
+	}
+
+	mergeField := func(x, y *SingleAssertionResult) *SingleAssertionResult {
+		if x == nil {
+			return y
+		}
+		if y == nil {
+			return x
+		}
+		// If both failed, combine failure messages into Details
+		if !x.Passed && !y.Passed {
+			details := make([]string, 0, len(x.Details)+len(y.Details)+2)
+			if x.Reason != "" {
+				details = append(details, x.Reason)
+			}
+			details = append(details, x.Details...)
+			if y.Reason != "" {
+				details = append(details, y.Reason)
+			}
+			details = append(details, y.Details...)
+			return &SingleAssertionResult{
+				Passed:  false,
+				Reason:  "multiple assertion failures",
+				Details: details,
+			}
+		}
+		if !x.Passed {
+			return x
+		}
+		if !y.Passed {
+			return y
+		}
+		return x
+	}
+
+	return &CompositeAssertionResult{
+		ToolsUsed:        mergeField(c.ToolsUsed, other.ToolsUsed),
+		RequireAny:       mergeField(c.RequireAny, other.RequireAny),
+		ToolsNotUsed:     mergeField(c.ToolsNotUsed, other.ToolsNotUsed),
+		MinToolCalls:     mergeField(c.MinToolCalls, other.MinToolCalls),
+		MaxToolCalls:     mergeField(c.MaxToolCalls, other.MaxToolCalls),
+		ResourcesRead:    mergeField(c.ResourcesRead, other.ResourcesRead),
+		ResourcesNotRead: mergeField(c.ResourcesNotRead, other.ResourcesNotRead),
+		PromptsUsed:      mergeField(c.PromptsUsed, other.PromptsUsed),
+		PromptsNotUsed:   mergeField(c.PromptsNotUsed, other.PromptsNotUsed),
+		CallOrder:        mergeField(c.CallOrder, other.CallOrder),
+		NoDuplicateCalls: mergeField(c.NoDuplicateCalls, other.NoDuplicateCalls),
+	}
+}
