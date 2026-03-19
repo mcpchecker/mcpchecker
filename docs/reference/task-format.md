@@ -461,4 +461,4 @@ Once migrated, you can incrementally replace script steps with built-in steps or
 
 ## Extension Protocol
 
-Extensions communicate with mcpchecker using JSON-RPC 2.0 over stdio. For details on implementing an extension, see [Extension Protocol Specification](specs/extension-protocol.md).
+Extensions communicate with mcpchecker using JSON-RPC 2.0 over stdio. For details on implementing an extension, see [Extension Protocol Specification](../specs/extension-protocol.md).

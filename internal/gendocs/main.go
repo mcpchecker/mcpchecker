@@ -10,7 +10,7 @@ import (
 )
 
 func main() {
-	dir := "./docs/cli"
+	dir := "./docs/reference/cli"
 	if len(os.Args) > 1 {
 		dir = os.Args[1]
 	}
