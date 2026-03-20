@@ -145,6 +145,27 @@ Scripts with a shebang (`#!/usr/bin/env python3`) are executed directly. Scripts
       exit(0 if result.returncode == 0 else 1)
 ```
 
+#### Accessing Agent Output in Verify Scripts
+
+Scripts executed in the `verify` phase have access to the agent's output through the `MCPCHECKER_AGENT_OUTPUT` environment variable.
+
+**Example:**
+
+```yaml
+verify:
+  - script:
+      inline: |
+        #!/usr/bin/env bash
+        if echo "$MCPCHECKER_AGENT_OUTPUT" | grep -q "nginx"; then
+          exit 0
+        else
+          exit 1
+        fi
+prompt:
+  inline: |
+    List me the Pods running on the cluster
+```
+
 ### llmJudge
 
 Uses an LLM to evaluate the agent's response. Only valid in the verify phase. Requires an LLM judge to be configured in the eval.yaml.
