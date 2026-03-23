@@ -24,6 +24,7 @@ func NewEvalCmd() *cobra.Command {
 	var labelSelector string
 	var parallelWorkers int
 	var runs int
+	var mcpConfigFile string
 
 	cmd := &cobra.Command{
 		Use:   "check [eval-config-file]",
@@ -38,6 +39,26 @@ func NewEvalCmd() *cobra.Command {
 			spec, err := eval.FromFile(configFile)
 			if err != nil {
 				return fmt.Errorf("failed to load eval config: %w", err)
+			}
+
+			overrideFile := func(specFile *string, fileName string) error {
+				if !filepath.IsAbs(fileName) {
+					absPath, err := filepath.Abs(fileName)
+					if err != nil {
+						return err
+					}
+					fileName = absPath
+				}
+				*specFile = fileName
+				return nil
+			}
+
+			// Override MCP config file if flag is specified
+			if mcpConfigFile != "" {
+				err = overrideFile(&spec.Config.McpConfigFile, mcpConfigFile)
+				if err != nil {
+					return fmt.Errorf("failed to resolve mcp config file: %w", err)
+				}
 			}
 
 			// Apply label selector filter if provided
@@ -98,6 +119,7 @@ func NewEvalCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&labelSelector, "label-selector", "l", "", "Filter taskSets by label (format: key=value, e.g., suite=kubernetes)")
 	cmd.Flags().IntVarP(&parallelWorkers, "parallel", "p", 1, "Number of parallel workers for tasks marked as parallel (1 = sequential)")
 	cmd.Flags().IntVarP(&runs, "runs", "n", 1, "Number of times to run each task (for consistency testing)")
+	cmd.Flags().StringVar(&mcpConfigFile, "mcp-config-file", "", "Path to MCP config file (overrides value in eval config)")
 
 	return cmd
 }
