@@ -83,6 +83,7 @@ func (m *extensionManager) Get(ctx context.Context, alias string) (Client, error
 
 	env := os.Environ()
 	for k, v := range spec.Env {
+		v = os.ExpandEnv(v)
 		env = append(env, fmt.Sprintf("%s=%s", k, v))
 	}
 
@@ -96,8 +97,19 @@ func (m *extensionManager) Get(ctx context.Context, alias string) (Client, error
 		Env: env,
 	})
 
+	expandedConfig := spec.Config
+	if spec.Config != nil {
+		expandedConfig = make(map[string]any)
+		for k, v := range spec.Config {
+			switch t := v.(type) {
+			case string:
+				expandedConfig[k] = os.ExpandEnv(t)
+			}
+		}
+	}
+
 	if err := c.Start(ctx, &protocol.InitializeParams{
-		Config: spec.Config,
+		Config: expandedConfig,
 	}); err != nil {
 		return nil, err
 	}

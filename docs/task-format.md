@@ -219,6 +219,15 @@ The `package` field can be:
 - A GitHub package reference (e.g., `https://github.com/org/repo@v1.0.0`)
 - A relative or absolute path to a local binary (for development)
 
+An entry in the `config` and `env` fields can also reference to environment variables:
+
+```yaml
+    kubernetes:
+      package: https://github.com/mcpchecker/kubernetes-extension@v0.0.1
+      config:
+        kubeconfig: "$KUBECONFIG"
+```
+
 ### Using Extension Operations
 
 Extension operations use the syntax `extension.operation`:
