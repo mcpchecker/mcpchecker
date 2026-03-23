@@ -14,6 +14,8 @@ import (
 	"github.com/mcpchecker/mcpchecker/pkg/tokens"
 )
 
+const EnvVarAgentOutput = "MCPCHECKER_AGENT_OUTPUT"
+
 // AgentDetails captures structured information from the agent execution.
 type AgentDetails struct {
 	TokenEstimate *tokens.Estimate        `json:"tokenEstimate,omitempty"`
@@ -357,6 +359,9 @@ func (r *taskRunner) Verify(ctx context.Context) (*PhaseOutput, error) {
 	}
 
 	stepOutputs := make(map[string]map[string]string)
+	stepEnvs := map[string]string{
+		EnvVarAgentOutput: r.output,
+	}
 
 	for i, s := range r.verify {
 		res, err := s.Execute(ctx, &steps.StepInput{
@@ -367,6 +372,7 @@ func (r *taskRunner) Verify(ctx context.Context) (*PhaseOutput, error) {
 			Workdir:     r.baseDir,
 			StepOutputs: stepOutputs,
 			Random:      r.random,
+			Env:         stepEnvs,
 		})
 
 		out.Steps = append(out.Steps, res)
