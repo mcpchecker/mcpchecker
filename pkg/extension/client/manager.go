@@ -7,6 +7,7 @@ import (
 	"os"
 	"sync"
 
+	"github.com/genmcp/gen-mcp/pkg/template"
 	"github.com/mcpchecker/mcpchecker/pkg/extension"
 	"github.com/mcpchecker/mcpchecker/pkg/extension/protocol"
 	"github.com/mcpchecker/mcpchecker/pkg/extension/resolver"
@@ -83,8 +84,24 @@ func (m *extensionManager) Get(ctx context.Context, alias string) (Client, error
 
 	env := os.Environ()
 	for k, v := range spec.Env {
-		v = os.ExpandEnv(v)
-		env = append(env, fmt.Sprintf("%s=%s", k, v))
+		// Parse env variables for Env field
+		envParseTemplate, err := template.ParseTemplate(v, template.TemplateParserOptions{})
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse env template: %w", err)
+		}
+		envBuilder, err := template.NewTemplateBuilder(envParseTemplate, false)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create template builder for env: %w", err)
+		}
+		envResult, err := envBuilder.GetResult()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get result for env template: %w", err)
+		}
+		str, ok := envResult.(string)
+		if !ok {
+			return nil, fmt.Errorf("env template resolved to non-string type: %T", envResult)
+		}
+		env = append(env, fmt.Sprintf("%s=%s", k, str))
 	}
 
 	c := New(Options{
@@ -103,7 +120,22 @@ func (m *extensionManager) Get(ctx context.Context, alias string) (Client, error
 		for k, v := range spec.Config {
 			switch t := v.(type) {
 			case string:
-				expandedConfig[k] = os.ExpandEnv(t)
+				// Parse env variables for Config field
+				parseTemplate, err := template.ParseTemplate(t, template.TemplateParserOptions{})
+				if err != nil {
+					return nil, fmt.Errorf("failed to parse config template: %w", err)
+				}
+				templateBuilder, err := template.NewTemplateBuilder(parseTemplate, false)
+				if err != nil {
+					return nil, fmt.Errorf("failed to create template builder for config: %w", err)
+				}
+				result, err := templateBuilder.GetResult()
+				if err != nil {
+					return nil, fmt.Errorf("failed to get result for config template: %w", err)
+				}
+				expandedConfig[k] = result
+			default:
+				expandedConfig[k] = v
 			}
 		}
 	}
