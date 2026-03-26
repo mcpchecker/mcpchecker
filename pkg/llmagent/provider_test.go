@@ -24,6 +24,11 @@ func TestResolveProvider(t *testing.T) {
 			expectErr:   true,
 			errContains: "anthropic",
 		},
+		"error lists google as supported provider": {
+			provider:    "unknown",
+			expectErr:   true,
+			errContains: "google",
+		},
 		"empty provider name": {
 			provider:    "",
 			expectErr:   true,
@@ -53,6 +58,8 @@ func clearProviderEnv() {
 		anthropicUseVertexEnvVar,
 		geminiApiKeyEnvVar,
 		geminiUseVertexEnvVar,
+		googleApiKeyEnvVar,
+		googleUseVertexEnvVar,
 		googleCloudProjectEnvVar,
 		googleCloudLocationEnvVar,
 		openaiApiKeyEnvVar,
@@ -132,7 +139,7 @@ func TestAnthropicProviderBuilder(t *testing.T) {
 	}
 }
 
-func TestGeminiProviderBuilder(t *testing.T) {
+func TestGoogleProviderBuilder(t *testing.T) {
 	tests := map[string]struct {
 		setupEnv    func()
 		expectErr   bool
@@ -171,6 +178,47 @@ func TestGeminiProviderBuilder(t *testing.T) {
 				os.Setenv(geminiApiKeyEnvVar, "test-gemini-key")
 			},
 		},
+		"GOOGLE_API_KEY used as fallback": {
+			setupEnv: func() {
+				os.Setenv(googleApiKeyEnvVar, "test-google-key")
+			},
+		},
+		"GEMINI_API_KEY takes precedence over GOOGLE_API_KEY": {
+			setupEnv: func() {
+				os.Setenv(geminiApiKeyEnvVar, "test-gemini-key")
+				os.Setenv(googleApiKeyEnvVar, "test-google-key")
+			},
+		},
+		"GOOGLE_USE_VERTEX enables vertex": {
+			setupEnv: func() {
+				os.Setenv(googleUseVertexEnvVar, "1")
+				os.Setenv(googleCloudProjectEnvVar, "my-project")
+				os.Setenv(googleCloudLocationEnvVar, "us-central1")
+			},
+		},
+		"GOOGLE_USE_VERTEX missing project": {
+			setupEnv: func() {
+				os.Setenv(googleUseVertexEnvVar, "1")
+				os.Setenv(googleCloudLocationEnvVar, "us-central1")
+			},
+			expectErr:   true,
+			errContains: googleCloudProjectEnvVar,
+		},
+		"GOOGLE_USE_VERTEX missing location": {
+			setupEnv: func() {
+				os.Setenv(googleUseVertexEnvVar, "1")
+				os.Setenv(googleCloudProjectEnvVar, "my-project")
+			},
+			expectErr:   true,
+			errContains: googleCloudLocationEnvVar,
+		},
+		"GOOGLE_USE_VERTEX disabled treats as API key mode": {
+			setupEnv: func() {
+				os.Setenv(googleUseVertexEnvVar, "0")
+			},
+			expectErr:   true,
+			errContains: googleApiKeyEnvVar,
+		},
 	}
 
 	for name, tc := range tests {
@@ -179,7 +227,7 @@ func TestGeminiProviderBuilder(t *testing.T) {
 			defer clearProviderEnv()
 			tc.setupEnv()
 
-			builder := &geminiProviderBuilder{}
+			builder := &googleProviderBuilder{providerName: googleProviderKey}
 			provider, err := builder.Build()
 
 			if tc.expectErr {
