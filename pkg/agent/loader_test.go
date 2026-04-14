@@ -23,12 +23,11 @@ func TestLoadWithBuiltins(t *testing.T) {
 			file: "builtin-claude-code.yaml",
 			validate: func(t *testing.T, spec *AgentSpec) {
 				assert.Equal(t, "claude-code", spec.Metadata.Name)
-				require.NotNil(t, spec.Commands.UseVirtualHome)
-				assert.False(t, *spec.Commands.UseVirtualHome)
-				assert.Contains(t, spec.Commands.RunPrompt, "claude")
+				require.NotNil(t, spec.AcpConfig)
+				assert.Equal(t, "claude-agent-acp", spec.AcpConfig.Cmd)
 			},
 			shouldSkip: func() bool {
-				_, err := exec.LookPath("claude")
+				_, err := exec.LookPath("claude-agent-acp")
 				return err != nil
 			}(),
 		},

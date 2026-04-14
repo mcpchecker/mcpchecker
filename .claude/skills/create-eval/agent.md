@@ -2,7 +2,69 @@
 
 Agent configuration files define how to run AI agents during evaluations, including how to pass MCP server configs and prompts.
 
-## Agent YAML Structure
+## Built-in Agents (Recommended)
+
+Built-in agents use the ACP (Agent Client Protocol) for structured output including tool calls, thinking steps, and token usage.
+
+### Inline Configuration
+
+Reference a builtin agent directly in your eval config:
+
+```yaml
+kind: Eval
+config:
+  agent:
+    type: "builtin.claude-code"
+```
+
+### File-based Configuration
+
+Or as a standalone agent YAML:
+
+```yaml
+kind: Agent
+metadata:
+  name: "claude-code"
+builtin:
+  type: "claude-code"
+```
+
+### Available Built-in Types
+
+| Type | Description | Requires Model |
+|------|-------------|---------------|
+| `claude-code` | Anthropic's Claude Code CLI via ACP | No |
+| `llm-agent` | Multi-provider LLM agent (OpenAI, Anthropic, Gemini, etc.) | Yes |
+
+### LLM Agent Example
+
+```yaml
+kind: Eval
+config:
+  agent:
+    type: "builtin.llm-agent"
+    model: "openai:gpt-4"
+```
+
+## Custom ACP Agents
+
+For agents that implement the ACP protocol directly:
+
+```yaml
+kind: Agent
+metadata:
+  name: "my-acp-agent"
+acp:
+  cmd: "my-acp-binary"
+  args:
+    - "--verbose"
+```
+
+## Custom Shell Agents
+
+For agents that don't implement ACP, use the `commands` section to define shell-based execution.
+
+### Agent YAML Structure
 
 ```yaml
 kind: Agent
@@ -15,26 +77,26 @@ commands:
   argTemplateAllowedTools: "mcp__{{ .ServerName }}__{{ .ToolName }}"
   allowedToolsJoinSeparator: " "  # optional
   runPrompt: |
-    claude {{ .McpServerFileArgs }} --print "{{ .Prompt }}"
-  getVersion: "claude --version"  # optional
+    my-agent {{ .McpServerFileArgs }} --print "{{ .Prompt }}"
+  getVersion: "my-agent --version"  # optional
 ```
 
-## Top-Level Fields
+### Top-Level Fields
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `kind` | string | Yes | Must be `"Agent"` |
 | `metadata` | object | Yes | Agent metadata (see below) |
-| `commands` | object | Yes | Command configuration (see below) |
+| `commands` | object | Yes (for shell agents) | Command configuration (see below) |
 
-## metadata Fields
+### metadata Fields
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `name` | string | Yes | Name of the agent |
 | `version` | string | No | Agent version (overridden by `getVersion` if present) |
 
-## commands Fields
+### commands Fields
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
@@ -45,9 +107,9 @@ commands:
 | `runPrompt` | string | Yes | Full command template to run agent (see below) |
 | `getVersion` | string | No | Command to get agent version dynamically |
 
-## Template Variables
+### Template Variables
 
-### argTemplateMcpServer
+#### argTemplateMcpServer
 
 Applied to each MCP server config file.
 
@@ -61,7 +123,7 @@ argTemplateMcpServer: "--mcp-config {{ .File }}"
 ```
 → Produces: `--mcp-config /tmp/mcp-config-123.json`
 
-### argTemplateAllowedTools
+#### argTemplateAllowedTools
 
 Applied to each allowed tool.
 
@@ -76,7 +138,7 @@ argTemplateAllowedTools: "mcp__{{ .ServerName }}__{{ .ToolName }}"
 ```
 → Produces: `mcp__kubernetes__pods_list mcp__kubernetes__pods_create`
 
-### runPrompt
+#### runPrompt
 
 The complete command to execute the agent.
 
@@ -86,40 +148,7 @@ The complete command to execute the agent.
 | `{{ .McpServerFileArgs }}` | All MCP server file arguments (space-separated) |
 | `{{ .AllowedToolArgs }}` | All allowed tool arguments (joined by separator) |
 
-**Example**:
-```yaml
-runPrompt: |
-  claude {{ .McpServerFileArgs }} \
-    --allowed-tools {{ .AllowedToolArgs }} \
-    --print "{{ .Prompt }}"
-```
-
-## Complete Examples
-
-### Claude Code Agent
-
-This is the complete, production-ready agent configuration from `examples/kubernetes/agent.yaml`:
-
-```yaml
-kind: Agent
-metadata:
-  name: "claude-code"
-commands:
-  useVirtualHome: false
-  argTemplateMcpServer: "--mcp-config {{ .File }}"
-  argTemplateAllowedTools: "mcp__{{ .ServerName }}__{{ .ToolName }}"
-  allowedToolsJoinSeparator: ","
-  runPrompt: |-
-    claude {{ .McpServerFileArgs }} --strict-mcp-config --allowedTools "{{ .AllowedToolArgs }}" --print "{{ .Prompt }}"
-```
-
-**Key features**:
-- Uses comma separator for tools (required by Claude Code's `--allowedTools` flag)
-- Includes `--strict-mcp-config` flag for strict MCP configuration validation
-- Passes allowed tools via `--allowedTools` flag (must be quoted)
-- Uses `--print` flag to output the prompt response
-
-### Custom Agent with Allowed Tools
+### Custom Agent Example
 
 ```yaml
 kind: Agent
@@ -135,46 +164,12 @@ commands:
     my-agent {{ .McpServerFileArgs }} {{ .AllowedToolArgs }} --task "{{ .Prompt }}"
 ```
 
-### Agent with Comma-Separated Tools
+### How Templates Work
 
-```yaml
-kind: Agent
-metadata:
-  name: "comma-agent"
-commands:
-  useVirtualHome: false
-  argTemplateMcpServer: "-s {{ .File }}"
-  argTemplateAllowedTools: "{{ .ServerName }}.{{ .ToolName }}"
-  allowedToolsJoinSeparator: ","
-  runPrompt: |
-    agent run {{ .McpServerFileArgs }} --tools "{{ .AllowedToolArgs }}" "{{ .Prompt }}"
-```
-
-## How Templates Work
-
-When running an agent:
+When running a shell agent:
 
 1. **Format MCP server args**: Apply `argTemplateMcpServer` to each config file
 2. **Format tool args**: Apply `argTemplateAllowedTools` to each allowed tool
 3. **Join tools**: Combine tool args using `allowedToolsJoinSeparator`
 4. **Build command**: Apply `runPrompt` with all variables
 5. **Execute**: Run via `$SHELL -c "command"`
-
-### Example Flow
-
-Given:
-- MCP config: `/tmp/mcp-123.json`
-- Allowed tools: `kubernetes.pods_list`, `kubernetes.pods_create`
-- Prompt: `"Create a pod named web"`
-
-Templates:
-```yaml
-argTemplateMcpServer: "--mcp-config {{ .File }}"
-argTemplateAllowedTools: "mcp__{{ .ServerName }}__{{ .ToolName }}"
-runPrompt: claude {{ .McpServerFileArgs }} "{{ .Prompt }}"
-```
-
-Final command:
-```bash
-claude --mcp-config /tmp/mcp-123.json "Create a pod named web"
-```

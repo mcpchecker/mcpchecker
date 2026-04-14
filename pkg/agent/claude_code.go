@@ -3,6 +3,8 @@ package agent
 import (
 	"fmt"
 	"os/exec"
+
+	"github.com/mcpchecker/mcpchecker/pkg/acpclient"
 )
 
 type ClaudeCodeAgent struct{}
@@ -20,25 +22,19 @@ func (a *ClaudeCodeAgent) RequiresModel() bool {
 }
 
 func (a *ClaudeCodeAgent) ValidateEnvironment() error {
-	if _, err := exec.LookPath("claude"); err != nil {
-		return fmt.Errorf("'claude' binary not found in PATH")
+	if _, err := exec.LookPath("claude-agent-acp"); err != nil {
+		return fmt.Errorf("'claude-agent-acp' binary not found in PATH (install with: npm install -g @agentclientprotocol/claude-agent-acp): %w", err)
 	}
 	return nil
 }
 
 func (a *ClaudeCodeAgent) GetDefaults(model string) (*AgentSpec, error) {
-	separator := ","
-	useVirtualHome := false
 	return &AgentSpec{
 		Metadata: AgentMetadata{
 			Name: "claude-code",
 		},
-		Commands: AgentCommands{
-			UseVirtualHome:            &useVirtualHome,
-			ArgTemplateMcpServer:      "--mcp-config {{ .File }}",
-			ArgTemplateAllowedTools:   "mcp__{{ .ServerName }}__{{ .ToolName }}",
-			AllowedToolsJoinSeparator: &separator,
-			RunPrompt:                 `claude {{ .McpServerFileArgs }} --strict-mcp-config --allowedTools "{{ .AllowedToolArgs }}" --print "{{ .Prompt }}"`,
+		AcpConfig: &acpclient.AcpConfig{
+			Cmd: "claude-agent-acp",
 		},
 	}, nil
 }

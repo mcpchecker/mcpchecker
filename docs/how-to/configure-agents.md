@@ -29,7 +29,7 @@ Use a separate file when you need custom commands or want to reuse the same agen
 
 ### Claude Code
 
-Uses Anthropic's Claude Code CLI:
+Uses Anthropic's Claude Code CLI via the ACP protocol, providing structured output with tool calls, thinking steps, and token usage:
 
 ```yaml
 kind: Eval
@@ -45,6 +45,11 @@ metadata:
   name: "claude-code"
 builtin:
   type: "claude-code"
+```
+
+**Prerequisite:** Install the Claude Code ACP adapter:
+```bash
+npm install -g @agentclientprotocol/claude-agent-acp
 ```
 
 ### LLM Agent
@@ -88,23 +93,21 @@ export OPENAI_API_KEY="your-key"
 
 ## ACP Mode
 
-ACP (Agent Control Protocol) mode gives structured access to agent data including tool calls, thinking, and token estimates. Any agent that implements the ACP protocol can be used.
+ACP (Agent Client Protocol) mode gives structured access to agent data including tool calls, thinking, and token estimates. The `builtin.claude-code` and `builtin.llm-agent` types use ACP by default.
 
-1. Install an ACP adapter (example: Claude Code):
-```bash
-npm install -g @zed-industries/claude-code-acp
-```
+For other agents that implement the ACP protocol, use the `acp` config directly:
 
-2. Create an agent YAML:
 ```yaml
 kind: Agent
 metadata:
-  name: "claude-code-acp"
+  name: "my-acp-agent"
 acp:
-  cmd: "claude-code-acp"
+  cmd: "my-acp-binary"
+  args:
+    - "--verbose"
 ```
 
-3. Reference it in your eval config:
+Reference it in your eval config:
 ```yaml
 kind: Eval
 config:
@@ -136,9 +139,12 @@ You can start from a built-in type and override specific settings:
 ```yaml
 kind: Agent
 metadata:
-  name: "claude-custom"
+  name: "custom-llm"
 builtin:
-  type: "claude-code"
+  type: "llm-agent"
+  model: "openai:gpt-4"
 commands:
   useVirtualHome: true  # Override just this setting
 ```
+
+Note: Command overrides only apply to shell-based agents. The `claude-code` builtin uses ACP and does not use the `commands` section.

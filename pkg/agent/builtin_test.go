@@ -3,6 +3,7 @@ package agent
 import (
 	"testing"
 
+	"github.com/mcpchecker/mcpchecker/pkg/acpclient"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -140,18 +141,9 @@ func TestClaudeCodeAgent(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, spec)
 
-		// Check metadata
 		assert.Equal(t, "claude-code", spec.Metadata.Name)
-
-		// Check commands
-		require.NotNil(t, spec.Commands.UseVirtualHome)
-		assert.False(t, *spec.Commands.UseVirtualHome)
-		assert.Equal(t, "--mcp-config {{ .File }}", spec.Commands.ArgTemplateMcpServer)
-		assert.Equal(t, "mcp__{{ .ServerName }}__{{ .ToolName }}", spec.Commands.ArgTemplateAllowedTools)
-		assert.Contains(t, spec.Commands.RunPrompt, "claude")
-		assert.Contains(t, spec.Commands.RunPrompt, "{{ .McpServerFileArgs }}")
-		assert.Contains(t, spec.Commands.RunPrompt, "{{ .AllowedToolArgs }}")
-		assert.Contains(t, spec.Commands.RunPrompt, "{{ .Prompt }}")
+		require.NotNil(t, spec.AcpConfig)
+		assert.Equal(t, &acpclient.AcpConfig{Cmd: "claude-agent-acp"}, spec.AcpConfig)
 	})
 
 	t.Run("GetDefaults with model (ignored)", func(t *testing.T) {
@@ -159,7 +151,7 @@ func TestClaudeCodeAgent(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, spec)
 
-		// Model should be ignored for Claude Code
 		assert.Equal(t, "claude-code", spec.Metadata.Name)
+		require.NotNil(t, spec.AcpConfig)
 	})
 }
