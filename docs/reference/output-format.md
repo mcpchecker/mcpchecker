@@ -80,7 +80,7 @@ The `results` array contains one entry per task run. Each entry has the followin
 }
 ```
 
-> **Legacy format:** Older output files (pre-summary) used a bare JSON array at the top level. All CLI commands (`view`, `summary`, `diff`, `verify`) auto-detect and support both formats.
+> **Legacy format:** Older output files (pre-summary) used a bare JSON array at the top level. All CLI commands (`view`, `summary`, `diff`, `verify`) auto-detect and support both formats. Support for the legacy format is deprecated and will be removed in a future release — re-run evaluations to generate output in the current format.
 
 ## Interpreting Results
 

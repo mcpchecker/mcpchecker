@@ -265,13 +265,36 @@ func (d *progressDisplay) printSummary(s *eval.EvalSummary) {
 
 	if s.Agent != nil {
 		fmt.Printf("Agent:          %s\n", s.Agent.Type)
+		if s.Agent.Name != "" {
+			fmt.Printf("Agent Name:     %s\n", s.Agent.Name)
+		}
 		if s.Agent.Model != "" {
 			fmt.Printf("Model:          %s\n", s.Agent.Model)
+		}
+		if s.Agent.Path != "" {
+			fmt.Printf("Agent Path:     %s\n", s.Agent.Path)
+		}
+		if s.Agent.Command != "" {
+			fmt.Printf("Agent Command:  %s\n", s.Agent.Command)
 		}
 	}
 
 	if s.Judge != nil {
-		fmt.Printf("Judge LLM:      %s\n", s.Judge.Model)
+		if s.Judge.Type != "" {
+			fmt.Printf("Judge:          %s\n", s.Judge.Type)
+		}
+		if s.Judge.Name != "" {
+			fmt.Printf("Judge Name:     %s\n", s.Judge.Name)
+		}
+		if s.Judge.Model != "" {
+			fmt.Printf("Judge Model:    %s\n", s.Judge.Model)
+		}
+		if s.Judge.Path != "" {
+			fmt.Printf("Judge Path:     %s\n", s.Judge.Path)
+		}
+		if s.Judge.Command != "" {
+			fmt.Printf("Judge Command:  %s\n", s.Judge.Command)
+		}
 	}
 
 	for _, srv := range s.MCPServers {

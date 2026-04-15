@@ -211,7 +211,7 @@ func (r *evalRunner) RunWithProgress(ctx context.Context, taskPattern string, ca
 	}
 
 	// Build summary from resolved configuration
-	summary := r.buildSummary(mcpConfig, judge, taskConfigs)
+	summary := r.buildSummary(agentSpec, mcpConfig, judge, taskConfigs)
 
 	r.progressCallback(ProgressEvent{
 		Type:    EventEvalStart,
@@ -246,25 +246,48 @@ func (r *evalRunner) RunWithProgress(ctx context.Context, taskPattern string, ca
 	}, nil
 }
 
-func (r *evalRunner) buildSummary(mcpConfig *mcpclient.MCPConfig, judge llmjudge.LLMJudge, taskConfigs []taskConfig) *EvalSummary {
+func (r *evalRunner) buildSummary(agentSpec *agent.AgentSpec, mcpConfig *mcpclient.MCPConfig, judge llmjudge.LLMJudge, taskConfigs []taskConfig) *EvalSummary {
 	summary := &EvalSummary{
 		ParallelWorkers: r.parallelWorkers,
 		Runs:            r.runs,
 	}
 
-	// Agent
+	// Agent — include ref-level info plus resolved spec details
 	if r.spec.Config.Agent != nil {
-		summary.Agent = &AgentSummary{
+		agentSummary := &AgentSummary{
 			Type:  r.spec.Config.Agent.Type,
 			Model: r.spec.Config.Agent.Model,
+			Path:  r.spec.Config.Agent.Path,
 		}
+		if agentSpec != nil {
+			agentSummary.Name = agentSpec.Metadata.Name
+			if agentSummary.Model == "" && agentSpec.Builtin != nil {
+				agentSummary.Model = agentSpec.Builtin.Model
+			}
+			if agentSpec.AcpConfig != nil {
+				agentSummary.Command = agentSpec.AcpConfig.Cmd
+			}
+		}
+		summary.Agent = agentSummary
 	}
 
 	// Judge
 	if modelName := judge.ModelName(); modelName != "" && modelName != "noop" {
 		judgeSummary := &JudgeSummary{Model: modelName}
 		if r.spec.Config.LLMJudge != nil && r.spec.Config.LLMJudge.AgentRef != nil {
-			judgeSummary.Type = r.spec.Config.LLMJudge.AgentRef.Type
+			ref := r.spec.Config.LLMJudge.AgentRef
+			judgeSummary.Type = ref.Type
+			judgeSummary.Path = ref.Path
+			// Resolve spec for additional details (name, ACP command)
+			if judgeSpec, err := agent.ResolveAgentRef(ref); err == nil && judgeSpec != nil {
+				judgeSummary.Name = judgeSpec.Metadata.Name
+				if judgeSummary.Model == "" && judgeSpec.Builtin != nil {
+					judgeSummary.Model = judgeSpec.Builtin.Model
+				}
+				if judgeSpec.AcpConfig != nil {
+					judgeSummary.Command = judgeSpec.AcpConfig.Cmd
+				}
+			}
 		}
 		summary.Judge = judgeSummary
 	}
@@ -320,8 +343,8 @@ func (r *evalRunner) buildSummary(mcpConfig *mcpclient.MCPConfig, judge llmjudge
 		Cleanup:        r.cleanupTimeout,
 		DefaultCleanup: r.defaultCleanupTimeout,
 	}
-	if r.spec.Config.DefaultTaskLimits != nil && r.spec.Config.DefaultTaskLimits.Timeout != "" {
-		if timeout.DefaultTask == "" {
+	if r.spec.Config.DefaultTaskLimits != nil {
+		if timeout.DefaultTask == "" && r.spec.Config.DefaultTaskLimits.Timeout != "" {
 			timeout.DefaultTask = r.spec.Config.DefaultTaskLimits.Timeout
 		}
 		if timeout.DefaultCleanup == "" && r.spec.Config.DefaultTaskLimits.CleanupTimeout != "" {

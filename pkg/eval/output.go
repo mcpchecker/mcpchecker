@@ -22,14 +22,20 @@ type EvalSummary struct {
 
 // AgentSummary describes the agent configuration.
 type AgentSummary struct {
-	Type  string `json:"type"`
-	Model string `json:"model,omitempty"`
+	Type    string `json:"type"`
+	Name    string `json:"name,omitempty"`
+	Model   string `json:"model,omitempty"`
+	Path    string `json:"path,omitempty"`
+	Command string `json:"command,omitempty"`
 }
 
 // JudgeSummary describes the LLM judge configuration.
 type JudgeSummary struct {
-	Type  string `json:"type,omitempty"`
-	Model string `json:"model,omitempty"`
+	Type    string `json:"type,omitempty"`
+	Name    string `json:"name,omitempty"`
+	Model   string `json:"model,omitempty"`
+	Path    string `json:"path,omitempty"`
+	Command string `json:"command,omitempty"`
 }
 
 // MCPServerSummary describes a single MCP server.
