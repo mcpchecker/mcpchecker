@@ -261,7 +261,7 @@ func (d *progressDisplay) handleProgress(event eval.ProgressEvent) {
 
 func (d *progressDisplay) printSummary(s *eval.EvalSummary) {
 	fmt.Println()
-	d.bold.Println("=== Evaluation Summary ===")
+	d.bold.Println("=== Evaluation Configuration Summary ===")
 
 	if s.Agent != nil {
 		fmt.Printf("Agent:          %s\n", s.Agent.Type)
