@@ -179,6 +179,125 @@ func TestFilter(t *testing.T) {
 	}
 }
 
+func TestParseOutput(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		wantResults int
+		wantSummary bool
+		wantErr     bool
+	}{
+		{
+			name:        "new object format",
+			input:       `{"summary":{"agent":{"type":"builtin.llm-agent"},"parallelWorkers":1,"runs":1},"results":[{"taskName":"t1","taskPassed":true}]}`,
+			wantResults: 1,
+			wantSummary: true,
+		},
+		{
+			name:        "legacy array format",
+			input:       `[{"taskName":"t1","taskPassed":true},{"taskName":"t2","taskPassed":false}]`,
+			wantResults: 2,
+			wantSummary: false,
+		},
+		{
+			name:        "new format with empty results array",
+			input:       `{"summary":{"parallelWorkers":1,"runs":1},"results":[]}`,
+			wantResults: 0,
+			wantSummary: true,
+		},
+		{
+			name:    "empty input",
+			input:   "",
+			wantErr: true,
+		},
+		{
+			name:    "whitespace only",
+			input:   "   \n  ",
+			wantErr: true,
+		},
+		{
+			name:    "object missing results field",
+			input:   `{"summary":{"parallelWorkers":1}}`,
+			wantErr: true,
+		},
+		{
+			name:    "invalid JSON",
+			input:   `{broken`,
+			wantErr: true,
+		},
+		{
+			name:        "legacy empty array",
+			input:       `[]`,
+			wantResults: 0,
+			wantSummary: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			output, err := ParseOutput([]byte(tt.input))
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(output.Results) != tt.wantResults {
+				t.Errorf("got %d results, want %d", len(output.Results), tt.wantResults)
+			}
+			if tt.wantSummary && output.Summary == nil {
+				t.Error("expected summary, got nil")
+			}
+			if !tt.wantSummary && output.Summary != nil {
+				t.Error("expected no summary, got one")
+			}
+		})
+	}
+}
+
+func TestLoadOutput(t *testing.T) {
+	// Write new format file and verify LoadOutput reads it correctly
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "output.json")
+
+	data := `{"summary":{"agent":{"type":"builtin.llm-agent","model":"openai:gpt-4"},"parallelWorkers":2,"runs":1},"results":[{"taskName":"task-1","taskPassed":true}]}`
+	if err := os.WriteFile(filePath, []byte(data), 0644); err != nil {
+		t.Fatalf("failed to write file: %v", err)
+	}
+
+	output, err := LoadOutput(filePath)
+	if err != nil {
+		t.Fatalf("LoadOutput failed: %v", err)
+	}
+
+	if output.Summary == nil || output.Summary.Agent == nil {
+		t.Fatal("expected summary with agent")
+	}
+	if output.Summary.Agent.Model != "openai:gpt-4" {
+		t.Errorf("agent model = %s, want openai:gpt-4", output.Summary.Agent.Model)
+	}
+	if len(output.Results) != 1 {
+		t.Errorf("got %d results, want 1", len(output.Results))
+	}
+}
+
+func TestLoadBackwardCompat(t *testing.T) {
+	// Load using legacy format through results.Load (returns []*EvalResult)
+	evalResults := sampleResults()
+	filePath := createTestResultsFile(t, evalResults)
+
+	loaded, err := Load(filePath)
+	if err != nil {
+		t.Fatalf("Load failed on legacy format: %v", err)
+	}
+	if len(loaded) != 3 {
+		t.Errorf("got %d results, want 3", len(loaded))
+	}
+}
+
 func TestCollectFailedAssertions(t *testing.T) {
 	assertionResults := &eval.CompositeAssertionResult{
 		ToolsUsed:    &eval.SingleAssertionResult{Passed: false, Reason: "Tool not called"},

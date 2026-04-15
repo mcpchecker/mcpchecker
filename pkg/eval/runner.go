@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -54,8 +55,8 @@ type EvalResult struct {
 }
 
 type EvalRunner interface {
-	Run(ctx context.Context, taskPattern string) ([]*EvalResult, error)
-	RunWithProgress(ctx context.Context, taskPattern string, callback ProgressCallback) ([]*EvalResult, error)
+	Run(ctx context.Context, taskPattern string) (*EvalOutput, error)
+	RunWithProgress(ctx context.Context, taskPattern string, callback ProgressCallback) (*EvalOutput, error)
 }
 
 // RunnerOptions configures the eval runner behavior
@@ -161,11 +162,11 @@ func (r *evalRunner) loadAgentSpec() (*agent.AgentSpec, error) {
 	return agent.ResolveAgentRef(r.spec.Config.Agent)
 }
 
-func (r *evalRunner) Run(ctx context.Context, taskPattern string) ([]*EvalResult, error) {
+func (r *evalRunner) Run(ctx context.Context, taskPattern string) (*EvalOutput, error) {
 	return r.RunWithProgress(ctx, taskPattern, NoopProgressCallback)
 }
 
-func (r *evalRunner) RunWithProgress(ctx context.Context, taskPattern string, callback ProgressCallback) ([]*EvalResult, error) {
+func (r *evalRunner) RunWithProgress(ctx context.Context, taskPattern string, callback ProgressCallback) (*EvalOutput, error) {
 	r.progressCallback = callback
 
 	if taskPattern == "" {
@@ -176,11 +177,6 @@ func (r *evalRunner) RunWithProgress(ctx context.Context, taskPattern string, ca
 	if err != nil {
 		return nil, fmt.Errorf("failed to compile regexp for task name match: %w", err)
 	}
-
-	r.progressCallback(ProgressEvent{
-		Type:    EventEvalStart,
-		Message: "Starting evaluation",
-	})
 
 	mcpConfig, err := r.loadMcpConfig()
 	if err != nil {
@@ -214,6 +210,15 @@ func (r *evalRunner) RunWithProgress(ctx context.Context, taskPattern string, ca
 		return nil, err
 	}
 
+	// Build summary from resolved configuration
+	summary := r.buildSummary(mcpConfig, judge, taskConfigs)
+
+	r.progressCallback(ProgressEvent{
+		Type:    EventEvalStart,
+		Message: "Starting evaluation",
+		Summary: summary,
+	})
+
 	// Group tasks by parallel support
 	groups := groupTasksByParallelSupport(taskConfigs)
 
@@ -235,7 +240,99 @@ func (r *evalRunner) RunWithProgress(ctx context.Context, taskPattern string, ca
 		Message: "Evaluation complete",
 	})
 
-	return results, nil
+	return &EvalOutput{
+		Summary: summary,
+		Results: results,
+	}, nil
+}
+
+func (r *evalRunner) buildSummary(mcpConfig *mcpclient.MCPConfig, judge llmjudge.LLMJudge, taskConfigs []taskConfig) *EvalSummary {
+	summary := &EvalSummary{
+		ParallelWorkers: r.parallelWorkers,
+		Runs:            r.runs,
+	}
+
+	// Agent
+	if r.spec.Config.Agent != nil {
+		summary.Agent = &AgentSummary{
+			Type:  r.spec.Config.Agent.Type,
+			Model: r.spec.Config.Agent.Model,
+		}
+	}
+
+	// Judge
+	if modelName := judge.ModelName(); modelName != "" && modelName != "noop" {
+		judgeSummary := &JudgeSummary{Model: modelName}
+		if r.spec.Config.LLMJudge != nil && r.spec.Config.LLMJudge.AgentRef != nil {
+			judgeSummary.Type = r.spec.Config.LLMJudge.AgentRef.Type
+		}
+		summary.Judge = judgeSummary
+	}
+
+	// MCP servers (sorted by name for deterministic output)
+	if mcpConfig != nil {
+		servers := mcpConfig.GetEnabledServers()
+		names := make([]string, 0, len(servers))
+		for name := range servers {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+
+		for _, name := range names {
+			server := servers[name]
+			serverType := "stdio"
+			if server.IsHttp() {
+				serverType = "http"
+			}
+			summary.MCPServers = append(summary.MCPServers, MCPServerSummary{
+				Name:    name,
+				Type:    serverType,
+				URL:     sanitizeURL(server.URL),
+				Command: server.Command,
+			})
+		}
+	}
+
+	// Task sets from config
+	var taskSetSummaries []TaskSetSummary
+	for _, ts := range r.spec.Config.TaskSets {
+		taskSetSummaries = append(taskSetSummaries, TaskSetSummary{
+			Glob:          ts.Glob,
+			Path:          ts.Path,
+			LabelSelector: ts.LabelSelector,
+		})
+	}
+
+	// Matched task names
+	taskNames := make([]string, 0, len(taskConfigs))
+	for _, tc := range taskConfigs {
+		taskNames = append(taskNames, tc.spec.Metadata.Name)
+	}
+	summary.Evals = &EvalsSummary{
+		Names:    taskNames,
+		TaskSets: taskSetSummaries,
+	}
+
+	// Timeouts
+	timeout := &TimeoutSummary{
+		Task:           r.taskTimeout,
+		DefaultTask:    r.defaultTaskTimeout,
+		Cleanup:        r.cleanupTimeout,
+		DefaultCleanup: r.defaultCleanupTimeout,
+	}
+	if r.spec.Config.DefaultTaskLimits != nil && r.spec.Config.DefaultTaskLimits.Timeout != "" {
+		if timeout.DefaultTask == "" {
+			timeout.DefaultTask = r.spec.Config.DefaultTaskLimits.Timeout
+		}
+		if timeout.DefaultCleanup == "" && r.spec.Config.DefaultTaskLimits.CleanupTimeout != "" {
+			timeout.DefaultCleanup = r.spec.Config.DefaultTaskLimits.CleanupTimeout
+		}
+	}
+	if timeout.Task != "" || timeout.DefaultTask != "" || timeout.Cleanup != "" || timeout.DefaultCleanup != "" {
+		summary.Timeout = timeout
+	}
+
+	return summary
 }
 
 func (r *evalRunner) collectTaskConfigs(rx *regexp.Regexp) ([]taskConfig, error) {

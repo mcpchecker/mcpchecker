@@ -2,6 +2,7 @@
 package results
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -25,18 +26,55 @@ type Stats struct {
 }
 
 // Load reads a JSON results file and returns the parsed evaluations.
+// Supports both the current format (object with summary + results) and
+// the legacy format (bare array of results).
 func Load(path string) ([]*eval.EvalResult, error) {
+	output, err := LoadOutput(path)
+	if err != nil {
+		return nil, err
+	}
+	return output.Results, nil
+}
+
+// LoadOutput reads a JSON results file and returns the full output including summary.
+// Supports both the current format (object with summary + results) and
+// the legacy format (bare array of results).
+func LoadOutput(path string) (*eval.EvalOutput, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read results file: %w", err)
 	}
 
-	var results []*eval.EvalResult
-	if err := json.Unmarshal(data, &results); err != nil {
-		return nil, fmt.Errorf("failed to parse results JSON: %w", err)
+	return ParseOutput(data)
+}
+
+// ParseOutput parses JSON data as an EvalOutput.
+// Auto-detects legacy array format vs current object format.
+func ParseOutput(data []byte) (*eval.EvalOutput, error) {
+	// Trim whitespace to detect format
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 {
+		return nil, fmt.Errorf("empty results data")
 	}
 
-	return results, nil
+	// Legacy format: bare JSON array
+	if trimmed[0] == '[' {
+		var results []*eval.EvalResult
+		if err := json.Unmarshal(data, &results); err != nil {
+			return nil, fmt.Errorf("failed to parse results JSON: %w", err)
+		}
+		return &eval.EvalOutput{Results: results}, nil
+	}
+
+	// Current format: object with summary + results
+	var output eval.EvalOutput
+	if err := json.Unmarshal(data, &output); err != nil {
+		return nil, fmt.Errorf("failed to parse results JSON: %w", err)
+	}
+	if output.Results == nil {
+		return nil, fmt.Errorf("invalid results file: missing 'results' field")
+	}
+	return &output, nil
 }
 
 // Filter returns the subset of results whose task names contain the filter substring.

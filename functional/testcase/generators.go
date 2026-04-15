@@ -10,6 +10,7 @@ import (
 
 	"github.com/mcpchecker/mcpchecker/functional/servers/agent"
 	"github.com/mcpchecker/mcpchecker/pkg/eval"
+	"github.com/mcpchecker/mcpchecker/pkg/results"
 	"github.com/mcpchecker/mcpchecker/pkg/task"
 	"github.com/mcpchecker/mcpchecker/pkg/util"
 )
@@ -200,19 +201,11 @@ func (g *Generator) writeJSON(filename string, data any) (string, error) {
 	return path, nil
 }
 
-// ReadEvalResults reads and parses the eval output JSON file
+// ReadEvalResults reads and parses the eval output JSON file.
+// Supports both the current format (object with summary + results) and
+// the legacy format (bare array of results).
 func ReadEvalResults(path string) ([]*eval.EvalResult, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-
-	var results []*eval.EvalResult
-	if err := json.Unmarshal(data, &results); err != nil {
-		return nil, err
-	}
-
-	return results, nil
+	return results.Load(path)
 }
 
 // WriteFile writes content to a file in the temp directory

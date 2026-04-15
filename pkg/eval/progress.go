@@ -9,7 +9,8 @@ type ProgressCallback func(event ProgressEvent)
 type ProgressEvent struct {
 	Type    ProgressEventType
 	Message string
-	Task    *EvalResult // Populated for task-related events
+	Task    *EvalResult  // Populated for task-related events
+	Summary *EvalSummary // Populated for EventEvalStart
 }
 
 // ProgressEventType represents the type of progress event

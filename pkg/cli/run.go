@@ -93,14 +93,14 @@ func NewEvalCmd() *cobra.Command {
 			// Run with progress
 			ctx := context.Background()
 			ctx = util.WithVerbose(ctx, verbose)
-			results, err := runner.RunWithProgress(ctx, run, display.handleProgress)
+			output, err := runner.RunWithProgress(ctx, run, display.handleProgress)
 			if err != nil {
 				return fmt.Errorf("eval failed: %w", err)
 			}
 
-			// Save results to JSON file
+			// Save results to JSON file (includes summary metadata)
 			outputFile := fmt.Sprintf("mcpchecker-%s-out.json", spec.Metadata.Name)
-			if err := saveResultsToFile(results, outputFile); err != nil {
+			if err := saveOutputToFile(output, outputFile); err != nil {
 				return fmt.Errorf("failed to save results to file: %w", err)
 			}
 			if outputFormat == "text" {
@@ -108,7 +108,7 @@ func NewEvalCmd() *cobra.Command {
 			}
 
 			// Display results
-			if err := displayResults(results, outputFormat); err != nil {
+			if err := displayResults(output, outputFormat); err != nil {
 				return fmt.Errorf("failed to display results: %w", err)
 			}
 
@@ -176,6 +176,9 @@ func (d *progressDisplay) handleProgress(event eval.ProgressEvent) {
 	switch event.Type {
 	case eval.EventEvalStart:
 		d.bold.Println("\n=== Starting Evaluation ===")
+		if event.Summary != nil {
+			d.printSummary(event.Summary)
+		}
 
 	case eval.EventTaskStart:
 		fmt.Println()
@@ -256,15 +259,80 @@ func (d *progressDisplay) handleProgress(event eval.ProgressEvent) {
 	}
 }
 
-func displayResults(results []*eval.EvalResult, format string) error {
+func (d *progressDisplay) printSummary(s *eval.EvalSummary) {
+	fmt.Println()
+	d.bold.Println("=== Evaluation Summary ===")
+
+	if s.Agent != nil {
+		fmt.Printf("Agent:          %s\n", s.Agent.Type)
+		if s.Agent.Model != "" {
+			fmt.Printf("Model:          %s\n", s.Agent.Model)
+		}
+	}
+
+	if s.Judge != nil {
+		fmt.Printf("Judge LLM:      %s\n", s.Judge.Model)
+	}
+
+	for _, srv := range s.MCPServers {
+		if srv.URL != "" {
+			fmt.Printf("MCP Server:     %s: %s\n", srv.Name, srv.URL)
+		} else if srv.Command != "" {
+			fmt.Printf("MCP Server:     %s: %s (stdio)\n", srv.Name, srv.Command)
+		}
+	}
+
+	if s.Evals != nil {
+		fmt.Printf("Evals:          %d matched", len(s.Evals.Names))
+		if len(s.Evals.Names) > 0 && len(s.Evals.Names) <= 10 {
+			fmt.Printf(" (%s)", strings.Join(s.Evals.Names, ", "))
+		}
+		fmt.Println()
+
+		for _, ts := range s.Evals.TaskSets {
+			if ts.Glob != "" {
+				fmt.Printf("  Glob:           %s\n", ts.Glob)
+			} else if ts.Path != "" {
+				fmt.Printf("  Path:           %s\n", ts.Path)
+			}
+			for k, v := range ts.LabelSelector {
+				fmt.Printf("  Label Selector: %s=%s\n", k, v)
+			}
+		}
+	}
+
+	if s.Timeout != nil {
+		if s.Timeout.Task != "" {
+			fmt.Printf("Timeout:        %s (per task, override)\n", s.Timeout.Task)
+		} else if s.Timeout.DefaultTask != "" {
+			fmt.Printf("Timeout:        %s (per task)\n", s.Timeout.DefaultTask)
+		}
+		if s.Timeout.Cleanup != "" {
+			fmt.Printf("Cleanup:        %s (override)\n", s.Timeout.Cleanup)
+		} else if s.Timeout.DefaultCleanup != "" {
+			fmt.Printf("Cleanup:        %s\n", s.Timeout.DefaultCleanup)
+		}
+	}
+
+	if s.ParallelWorkers > 1 {
+		fmt.Printf("Parallel:       %d workers\n", s.ParallelWorkers)
+	}
+	if s.Runs > 1 {
+		fmt.Printf("Runs:           %d per task\n", s.Runs)
+	}
+
+	d.bold.Println("===============================")
+}
+
+func displayResults(output *eval.EvalOutput, format string) error {
 	switch format {
 	case "json":
 		encoder := json.NewEncoder(os.Stdout)
 		encoder.SetIndent("", "  ")
-		return encoder.Encode(results)
+		return encoder.Encode(output)
 
 	case "text":
-		return displayTextResults(results)
+		return displayTextResults(output.Results)
 
 	default:
 		return fmt.Errorf("unknown output format: %s", format)
@@ -532,7 +600,7 @@ func printSingleAssertion(name string, result *eval.SingleAssertionResult) {
 	}
 }
 
-func saveResultsToFile(results []*eval.EvalResult, filename string) error {
+func saveOutputToFile(output *eval.EvalOutput, filename string) error {
 	file, err := os.Create(filename)
 	if err != nil {
 		return fmt.Errorf("failed to create file: %w", err)
@@ -541,7 +609,7 @@ func saveResultsToFile(results []*eval.EvalResult, filename string) error {
 
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(results); err != nil {
+	if err := encoder.Encode(output); err != nil {
 		return fmt.Errorf("failed to encode results: %w", err)
 	}
 
