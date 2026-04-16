@@ -125,7 +125,7 @@ func NewEvalCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&outputFormat, "output", "o", "text", "Output format (text, json)")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Verbose output")
 	cmd.Flags().StringVarP(&run, "run", "r", "", "Regular expression to match task names to run (unanchored, like go test -run)")
-	cmd.Flags().StringVarP(&labelSelector, "label-selector", "l", "", "Filter taskSets by label (format: key=value, e.g., suite=kubernetes)")
+	cmd.Flags().StringVarP(&labelSelector, "label-selector", "l", "", "Filter taskSets by labels (e.g., suite=k8s,suite=helm for OR; suite=k8s,difficulty=easy for AND)")
 	cmd.Flags().IntVarP(&parallelWorkers, "parallel", "p", 1, "Number of parallel workers for tasks marked as parallel (1 = sequential)")
 	cmd.Flags().IntVarP(&runs, "runs", "n", 1, "Number of times to run each task (for consistency testing)")
 	cmd.Flags().StringVar(&mcpConfigFile, "mcp-config-file", "", "Path to MCP config file (overrides value in eval config)")
