@@ -22,11 +22,17 @@ The `summary` object captures the resolved configuration used for the evaluation
   "summary": {
     "agent": {
       "type": "builtin.llm-agent",
-      "model": "openai:gpt-5"
+      "name": "my-agent",
+      "model": "openai:gpt-5",
+      "path": "agents/my-agent.yaml",
+      "command": "node agent.js"
     },
     "judge": {
       "type": "builtin.llm-agent",
-      "model": "claude-sonnet-4"
+      "name": "my-judge",
+      "model": "claude-sonnet-4",
+      "path": "agents/my-judge.yaml",
+      "command": "node judge.js"
     },
     "mcpServers": [
       {

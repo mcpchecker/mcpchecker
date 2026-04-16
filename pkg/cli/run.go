@@ -269,7 +269,7 @@ func (d *progressDisplay) printSummary(s *eval.EvalSummary) {
 			fmt.Printf("Agent Name:     %s\n", s.Agent.Name)
 		}
 		if s.Agent.Model != "" {
-			fmt.Printf("Model:          %s\n", s.Agent.Model)
+			fmt.Printf("Agent Model:    %s\n", s.Agent.Model)
 		}
 		if s.Agent.Path != "" {
 			fmt.Printf("Agent Path:     %s\n", s.Agent.Path)
