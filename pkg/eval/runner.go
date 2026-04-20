@@ -774,16 +774,10 @@ func (r *evalRunner) runTask(
 	}
 
 	// Defer cleanup with its own timeout context, independent of task timeout.
-	// Build on a fresh background context so the task deadline doesn't propagate,
-	// but re-attach managers so cleanup steps can use extensions and MCP servers.
+	// WithoutCancel preserves all context values (managers, judges, etc.)
+	// while detaching from the parent's deadline/cancellation.
 	defer func() {
-		cleanupBase := context.Background()
-		if mgr, ok := client.ManagerFromContext(ctx); ok {
-			cleanupBase = client.ManagerToContext(cleanupBase, mgr)
-		}
-		if mgr, ok := mcpclient.ManagerFromContext(ctx); ok {
-			cleanupBase = mcpclient.ManagerToContext(cleanupBase, mgr)
-		}
+		cleanupBase := context.WithoutCancel(ctx)
 
 		var cleanupCtx context.Context
 		var cleanupCancel context.CancelFunc
