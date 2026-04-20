@@ -2,16 +2,19 @@ package eval
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"regexp"
 	"testing"
 	"time"
 
 	"github.com/mcpchecker/mcpchecker/pkg/agent"
-	"github.com/mcpchecker/mcpchecker/pkg/extension/client"
 	extSpec "github.com/mcpchecker/mcpchecker/pkg/extension"
+	"github.com/mcpchecker/mcpchecker/pkg/extension/client"
+	extprotocol "github.com/mcpchecker/mcpchecker/pkg/extension/protocol"
 	"github.com/mcpchecker/mcpchecker/pkg/mcpclient"
 	"github.com/mcpchecker/mcpchecker/pkg/mcpproxy"
+	"github.com/mcpchecker/mcpchecker/pkg/steps"
 	"github.com/mcpchecker/mcpchecker/pkg/task"
 	"github.com/mcpchecker/mcpchecker/pkg/tokens"
 	"github.com/mcpchecker/mcpchecker/pkg/util"
@@ -1035,20 +1038,48 @@ func (f *fakeMcpManager) GetAll() map[string]*mcpclient.Client   { return map[st
 func (f *fakeMcpManager) Close(_ context.Context) error          { return nil }
 
 // fakeExtensionManager implements client.ExtensionManager
-type fakeExtensionManager struct{}
+type fakeExtensionManager struct {
+	extensions map[string]client.Client
+}
+
+func newFakeExtensionManager() *fakeExtensionManager {
+	return &fakeExtensionManager{extensions: make(map[string]client.Client)}
+}
 
 func (f *fakeExtensionManager) Register(_ string, _ *extSpec.ExtensionSpec) error { return nil }
-func (f *fakeExtensionManager) Get(_ context.Context, _ string) (client.Client, error) {
+func (f *fakeExtensionManager) Get(_ context.Context, alias string) (client.Client, error) {
+	if c, ok := f.extensions[alias]; ok {
+		return c, nil
+	}
 	return nil, nil
 }
-func (f *fakeExtensionManager) Has(_ string) bool              { return false }
+func (f *fakeExtensionManager) Has(alias string) bool {
+	_, ok := f.extensions[alias]
+	return ok
+}
 func (f *fakeExtensionManager) ShutdownAll(_ context.Context) error { return nil }
+
+// fakeExtensionClient implements client.Client for testing
+type fakeExtensionClient struct {
+	manifest *extprotocol.InitializeResult
+}
+
+func (f *fakeExtensionClient) Start(_ context.Context, _ *extprotocol.InitializeParams) error {
+	return nil
+}
+func (f *fakeExtensionClient) Execute(_ context.Context, _ *extprotocol.ExecuteParams) (*extprotocol.ExecuteResult, error) {
+	return &extprotocol.ExecuteResult{Success: true, Message: "cleaned up"}, nil
+}
+func (f *fakeExtensionClient) Manifest() *extprotocol.InitializeResult {
+	return f.manifest
+}
+func (f *fakeExtensionClient) Shutdown(_ context.Context) error { return nil }
 
 // setupTestContext creates a context with fake MCP and extension managers injected
 func setupTestContext() context.Context {
 	ctx := context.Background()
 	ctx = mcpclient.ManagerToContext(ctx, &fakeMcpManager{})
-	ctx = client.ManagerToContext(ctx, &fakeExtensionManager{})
+	ctx = client.ManagerToContext(ctx, newFakeExtensionManager())
 	return ctx
 }
 
@@ -1146,4 +1177,64 @@ func TestRunTaskCleanupRunsAfterTimeout(t *testing.T) {
 	// Cleanup should have run (cleanup output is set even with no cleanup steps)
 	assert.NotNil(t, result.CleanupOutput, "cleanup should run even after timeout")
 	assert.True(t, result.CleanupOutput.Success, "cleanup with no steps should succeed")
+}
+
+func TestCleanupContextHasManagers(t *testing.T) {
+	extManager := newFakeExtensionManager()
+	extManager.extensions["testExt"] = &fakeExtensionClient{
+		manifest: &extprotocol.InitializeResult{
+			Name:    "testExt",
+			Version: "1.0.0",
+			Operations: map[string]*extprotocol.Operation{
+				"doCleanup": {
+					Description: "cleanup operation",
+				},
+			},
+		},
+	}
+
+	ctx := context.Background()
+	ctx = mcpclient.ManagerToContext(ctx, &fakeMcpManager{})
+	ctx = client.ManagerToContext(ctx, extManager)
+
+	runner := &evalRunner{
+		spec: &EvalSpec{
+			Config: EvalConfig{},
+		},
+		progressCallback: NoopProgressCallback,
+	}
+
+	extName := "testExt"
+	taskCfg := taskConfig{
+		path: "test.yaml",
+		spec: &task.TaskConfig{
+			Metadata: task.TaskMetadata{
+				Name: "extension-cleanup-test",
+			},
+			Spec: &task.TaskSpec{
+				Requires: []task.Requirements{
+					{Extension: &extName},
+				},
+				Cleanup: []*steps.StepConfig{
+					{
+						Config: map[string]json.RawMessage{
+							"testExt.doCleanup": json.RawMessage(`{}`),
+						},
+					},
+				},
+				Prompt: &util.Step{Inline: "do something"},
+			},
+		},
+	}
+
+	agentRunner := &fakeAgentRunner{delay: 10 * time.Millisecond}
+
+	result, err := runner.runTask(ctx, agentRunner, taskCfg)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	// Cleanup must have run successfully — the extension manager should be
+	// available in the cleanup context so the extension step can execute.
+	require.NotNil(t, result.CleanupOutput, "cleanup output should be set")
+	assert.True(t, result.CleanupOutput.Success, "cleanup should succeed; got error: %s", result.CleanupOutput.Error)
 }
