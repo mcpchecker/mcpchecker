@@ -161,6 +161,10 @@ func (a *acpAgent) Cancel(_ context.Context, params acp.CancelNotification) erro
 	return nil
 }
 
+func (a *acpAgent) ListSessions(_ context.Context, _ acp.ListSessionsRequest) (acp.ListSessionsResponse, error) {
+	return acp.ListSessionsResponse{}, nil
+}
+
 func (a *acpAgent) SetSessionMode(_ context.Context, _ acp.SetSessionModeRequest) (acp.SetSessionModeResponse, error) {
 	return acp.SetSessionModeResponse{}, nil
 }
