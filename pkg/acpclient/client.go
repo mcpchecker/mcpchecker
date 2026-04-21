@@ -59,7 +59,7 @@ func (c *client) Start(ctx context.Context) error {
 	initResp, err := c.conn.Initialize(ctx, acp.InitializeRequest{
 		ProtocolVersion: acp.ProtocolVersionNumber,
 		ClientCapabilities: acp.ClientCapabilities{
-			Fs:       acp.FileSystemCapability{ReadTextFile: false, WriteTextFile: false},
+			Fs:       acp.FileSystemCapabilities{ReadTextFile: false, WriteTextFile: false},
 			Terminal: false,
 		},
 	})

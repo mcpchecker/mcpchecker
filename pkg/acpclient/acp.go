@@ -121,8 +121,8 @@ func (c *client) CreateTerminal(ctx context.Context, params acp.CreateTerminalRe
 // Request to kill a terminal command without releasing the terminal.
 //
 // Only available if the client supports the 'terminal' capability
-func (c *client) KillTerminalCommand(ctx context.Context, params acp.KillTerminalCommandRequest) (acp.KillTerminalCommandResponse, error) {
-	return acp.KillTerminalCommandResponse{}, fmt.Errorf("no terminal capability")
+func (c *client) KillTerminal(ctx context.Context, params acp.KillTerminalRequest) (acp.KillTerminalResponse, error) {
+	return acp.KillTerminalResponse{}, fmt.Errorf("no terminal capability")
 }
 
 // Request to get the current output and status of a terminal.
