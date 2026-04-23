@@ -39,6 +39,9 @@ type EvalConfig struct {
 	// Agent configuration
 	Agent *agent.AgentRef `json:"agent"`
 
+	// Sources are external task repositories
+	Sources map[string]*SourceSpec `json:"sources,omitempty"`
+
 	// Extensions configuration
 	Extensions map[string]*extension.ExtensionSpec `json:"extensions"`
 
@@ -55,6 +58,10 @@ type EvalConfig struct {
 }
 
 type TaskSet struct {
+	// Source references a named source from config.sources.
+	// When set, Glob/Path are resolved relative to the fetched source directory.
+	Source string `json:"source,omitempty"`
+
 	// Exactly one of Glob or Path must be set
 	Glob string `json:"glob,omitempty"`
 	Path string `json:"path,omitempty"`
@@ -64,6 +71,11 @@ type TaskSet struct {
 	LabelSelector map[string]string `json:"labelSelector,omitempty"`
 
 	Assertions *TaskAssertions `json:"assertions,omitempty"`
+
+	// ServerMapping rewrites task requires.mcpServer names when loading tasks
+	// from this set. Populated automatically during source expansion; not set
+	// directly in eval.yaml.
+	ServerMapping map[string]string `json:"serverMapping,omitempty"`
 }
 
 // TODO: add a custom Verify script for another form of assertion

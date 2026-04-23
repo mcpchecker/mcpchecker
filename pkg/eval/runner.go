@@ -414,6 +414,11 @@ func (r *evalRunner) collectTaskConfigs(rx *regexp.Regexp) ([]taskConfig, error)
 				continue
 			}
 
+			// Apply source serverMapping: rewrite mcpServer names in requires.
+			if len(ts.ServerMapping) > 0 && taskSpec.Spec != nil {
+				applyServerMapping(taskSpec.Spec.Requires, ts.ServerMapping)
+			}
+
 			seen[canonicalPath] = len(taskConfigs)
 			var assertions []*TaskAssertions
 			if ts.Assertions != nil {
@@ -428,6 +433,19 @@ func (r *evalRunner) collectTaskConfigs(rx *regexp.Regexp) ([]taskConfig, error)
 	}
 
 	return taskConfigs, nil
+}
+
+// applyServerMapping rewrites mcpServer names in requires using the provided mapping.
+func applyServerMapping(requires []task.Requirements, mapping map[string]string) {
+	for i := range requires {
+		if requires[i].McpServer == nil {
+			continue
+		}
+		if mapped, ok := mapping[*requires[i].McpServer]; ok {
+			mappedCopy := mapped
+			requires[i].McpServer = &mappedCopy
+		}
+	}
 }
 
 // taskGroup represents a batch of tasks to run together
