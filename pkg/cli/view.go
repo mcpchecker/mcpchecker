@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"reflect"
 	"sort"
 	"strings"
@@ -61,7 +63,7 @@ Examples:
 				if idx > 0 {
 					fmt.Println()
 				}
-				printEvalResult(result, viewOptions{
+				printEvalResult(os.Stdout, result, viewOptions{
 					showTimeline:   showTimeline,
 					maxEvents:      maxEvents,
 					maxOutputLines: maxOutputLines,
@@ -90,17 +92,17 @@ type viewOptions struct {
 	maxLineLength  int
 }
 
-// printEvalResult prints a formatted summary of a single evaluation result.
-func printEvalResult(result *eval.EvalResult, opts viewOptions) {
+// printEvalResult writes a formatted summary of a single evaluation result to w.
+func printEvalResult(w io.Writer, result *eval.EvalResult, opts viewOptions) {
 	bold := color.New(color.Bold)
 	green := color.New(color.FgGreen)
 	red := color.New(color.FgRed)
 	yellow := color.New(color.FgYellow)
 
-	bold.Printf("Task: %s\n", result.TaskName)
-	fmt.Printf("  Path: %s\n", result.TaskPath)
+	bold.Fprintf(w, "Task: %s\n", result.TaskName)
+	fmt.Fprintf(w, "  Path: %s\n", result.TaskPath)
 	if result.Difficulty != "" {
-		fmt.Printf("  Difficulty: %s\n", result.Difficulty)
+		fmt.Fprintf(w, "  Difficulty: %s\n", result.Difficulty)
 	}
 
 	status := "PASSED"
@@ -118,62 +120,62 @@ func printEvalResult(result *eval.EvalResult, opts viewOptions) {
 		statusColor = yellow
 	}
 
-	statusColor.Printf("  Status: %s\n", status)
+	statusColor.Fprintf(w, "  Status: %s\n", status)
 	if trimmed := strings.TrimSpace(result.TaskError); trimmed != "" {
-		printMultilineField("Error", trimmed)
+		printMultilineField(w, "Error", trimmed)
 	}
 
 	if prompt := loadTaskPrompt(result.TaskPath); prompt != "" {
-		printMultilineField("Prompt", prompt)
+		printMultilineField(w, "Prompt", prompt)
 	}
 
-	printAssertions(result.AssertionResults, yellow)
-	printTokenEstimate(result.TokenEstimate)
-	printActualAgentTokenUsage(result.TokenEstimate)
-	printJudgeTokenUsage(result.JudgeTokenUsage)
-	printCallHistory(result.CallHistory, opts)
+	printAssertions(w, result.AssertionResults, yellow)
+	printTokenEstimate(w, result.TokenEstimate)
+	printActualAgentTokenUsage(w, result.TokenEstimate)
+	printJudgeTokenUsage(w, result.JudgeTokenUsage)
+	printCallHistory(w, result.CallHistory, opts)
 
 	if opts.showTimeline {
 		timeline := summarizeTaskOutput(result.TaskOutput, opts.maxEvents, opts.maxOutputLines, opts.maxLineLength)
 		if len(timeline) > 0 {
-			fmt.Println("  Timeline:")
+			fmt.Fprintln(w, "  Timeline:")
 			for _, line := range timeline {
-				printTimelineLine(line)
+				printTimelineLine(w, line)
 			}
 		}
 	}
 }
 
-// printTokenEstimate prints agent token usage estimates.
-func printTokenEstimate(estimate *tokens.Estimate) {
+// printTokenEstimate writes agent token usage estimates to w.
+func printTokenEstimate(w io.Writer, estimate *tokens.Estimate) {
 	if estimate == nil || estimate.TotalTokens == 0 {
 		return
 	}
 
-	fmt.Printf("  Estimated Tokens: ~%d (in=~%d, out=~%d)",
+	fmt.Fprintf(w, "  Estimated Tokens: ~%d (in=~%d, out=~%d)",
 		estimate.TotalTokens, estimate.InputTokens, estimate.OutputTokens)
 	if estimate.Error != "" {
-		fmt.Printf(" [incomplete - %s]", estimate.Error)
+		fmt.Fprintf(w, " [incomplete - %s]", estimate.Error)
 	} else {
-		fmt.Printf(" [excludes system prompt & cache]")
+		fmt.Fprintf(w, " [excludes system prompt & cache]")
 	}
 
 	// Show input breakdown
 	hasInputDetails := estimate.PromptTokens > 0 || estimate.ToolOutputTokens > 0 ||
 		estimate.McpSchemaTokens > 0 || estimate.ResourceOutputTokens > 0 || estimate.PromptGetOutputTokens > 0
 	if hasInputDetails {
-		fmt.Printf("\n    input: prompt=~%d", estimate.PromptTokens)
+		fmt.Fprintf(w, "\n    input: prompt=~%d", estimate.PromptTokens)
 		if estimate.ToolOutputTokens > 0 {
-			fmt.Printf(", tool_output=~%d", estimate.ToolOutputTokens)
+			fmt.Fprintf(w, ", tool_output=~%d", estimate.ToolOutputTokens)
 		}
 		if estimate.McpSchemaTokens > 0 {
-			fmt.Printf(", mcp_schemas=~%d", estimate.McpSchemaTokens)
+			fmt.Fprintf(w, ", mcp_schemas=~%d", estimate.McpSchemaTokens)
 		}
 		if estimate.ResourceOutputTokens > 0 {
-			fmt.Printf(", resources=~%d", estimate.ResourceOutputTokens)
+			fmt.Fprintf(w, ", resources=~%d", estimate.ResourceOutputTokens)
 		}
 		if estimate.PromptGetOutputTokens > 0 {
-			fmt.Printf(", prompts=~%d", estimate.PromptGetOutputTokens)
+			fmt.Fprintf(w, ", prompts=~%d", estimate.PromptGetOutputTokens)
 		}
 	}
 
@@ -181,44 +183,42 @@ func printTokenEstimate(estimate *tokens.Estimate) {
 	hasOutputDetails := estimate.MessageTokens > 0 || estimate.ThinkingTokens > 0 ||
 		estimate.ToolInputTokens > 0 || estimate.ResourceInputTokens > 0 || estimate.PromptGetInputTokens > 0
 	if hasOutputDetails {
-		fmt.Printf("\n    output: message=~%d", estimate.MessageTokens)
+		fmt.Fprintf(w, "\n    output: message=~%d", estimate.MessageTokens)
 		if estimate.ThinkingTokens > 0 {
-			fmt.Printf(", thinking=~%d", estimate.ThinkingTokens)
+			fmt.Fprintf(w, ", thinking=~%d", estimate.ThinkingTokens)
 		}
 		if estimate.ToolInputTokens > 0 {
-			fmt.Printf(", tool_input=~%d", estimate.ToolInputTokens)
+			fmt.Fprintf(w, ", tool_input=~%d", estimate.ToolInputTokens)
 		}
 		if estimate.ResourceInputTokens > 0 {
-			fmt.Printf(", resource_input=~%d", estimate.ResourceInputTokens)
+			fmt.Fprintf(w, ", resource_input=~%d", estimate.ResourceInputTokens)
 		}
 		if estimate.PromptGetInputTokens > 0 {
-			fmt.Printf(", prompt_input=~%d", estimate.PromptGetInputTokens)
+			fmt.Fprintf(w, ", prompt_input=~%d", estimate.PromptGetInputTokens)
 		}
 	}
-	fmt.Println()
+	fmt.Fprintln(w)
 }
 
-func printActualAgentTokenUsage(estimate *tokens.Estimate) {
+func printActualAgentTokenUsage(w io.Writer, estimate *tokens.Estimate) {
 	if estimate == nil || estimate.Source != tokens.SourceActual || estimate.Actual == nil {
 		return
 	}
 
 	agentTokenUsage := estimate.Actual
 	if agentTokenUsage.InputTokens > 0 || agentTokenUsage.OutputTokens > 0 {
-		fmt.Printf("  Agent Tokens: %d (in=%d, out=%d)", agentTokenUsage.TotalTokens, agentTokenUsage.InputTokens, agentTokenUsage.OutputTokens)
-		fmt.Println()
+		fmt.Fprintf(w, "  Agent Tokens: %d (in=%d, out=%d)\n", agentTokenUsage.TotalTokens, agentTokenUsage.InputTokens, agentTokenUsage.OutputTokens)
 	}
 }
 
-func printJudgeTokenUsage(judgeTokenUsage *tokens.Usage) {
+func printJudgeTokenUsage(w io.Writer, judgeTokenUsage *tokens.Usage) {
 	if judgeTokenUsage != nil && (judgeTokenUsage.InputTokens > 0 || judgeTokenUsage.OutputTokens > 0) {
-		fmt.Printf("  Judge Tokens: %d (in=%d, out=%d)", judgeTokenUsage.TotalTokens, judgeTokenUsage.InputTokens, judgeTokenUsage.OutputTokens)
-		fmt.Println()
+		fmt.Fprintf(w, "  Judge Tokens: %d (in=%d, out=%d)\n", judgeTokenUsage.TotalTokens, judgeTokenUsage.InputTokens, judgeTokenUsage.OutputTokens)
 	}
 }
 
-// printAssertions prints assertion counts and any failing assertion reasons.
-func printAssertions(results *eval.CompositeAssertionResult, warn *color.Color) {
+// printAssertions writes assertion counts and any failing assertion reasons to w.
+func printAssertions(w io.Writer, results *eval.CompositeAssertionResult, warn *color.Color) {
 	if results == nil {
 		return
 	}
@@ -230,11 +230,11 @@ func printAssertions(results *eval.CompositeAssertionResult, warn *color.Color) 
 	}
 
 	if failed == 0 {
-		fmt.Printf("  Assertions: %d/%d passed\n", total, total)
+		fmt.Fprintf(w, "  Assertions: %d/%d passed\n", total, total)
 		return
 	}
 
-	warn.Printf("  Assertions: %d/%d passed\n", total-failed, total)
+	warn.Fprintf(w, "  Assertions: %d/%d passed\n", total-failed, total)
 
 	val := reflect.ValueOf(results).Elem()
 	typ := val.Type()
@@ -252,15 +252,15 @@ func printAssertions(results *eval.CompositeAssertionResult, warn *color.Color) 
 			continue
 		}
 
-		fmt.Printf("    • %s: %s\n", fieldType.Name, res.Reason)
+		fmt.Fprintf(w, "    • %s: %s\n", fieldType.Name, res.Reason)
 		for _, detail := range res.Details {
-			fmt.Printf("      %s\n", detail)
+			fmt.Fprintf(w, "      %s\n", detail)
 		}
 	}
 }
 
-// printCallHistory emits an aggregated summary of tool/resource/prompt usage.
-func printCallHistory(history *mcpproxy.CallHistory, opts viewOptions) {
+// printCallHistory writes an aggregated summary of tool/resource/prompt usage to w.
+func printCallHistory(w io.Writer, history *mcpproxy.CallHistory, opts viewOptions) {
 	if history == nil {
 		return
 	}
@@ -273,36 +273,36 @@ func printCallHistory(history *mcpproxy.CallHistory, opts viewOptions) {
 		return
 	}
 
-	fmt.Printf("  Call history:")
+	fmt.Fprintf(w, "  Call history:")
 	if toolCalls > 0 {
-		fmt.Printf(" tools=%d", toolCalls)
+		fmt.Fprintf(w, " tools=%d", toolCalls)
 		if summaries := summarizeToolCalls(history.ToolCalls); summaries != "" {
-			fmt.Printf(" (%s)", summaries)
+			fmt.Fprintf(w, " (%s)", summaries)
 		}
 	}
 	if resourceReads > 0 {
-		fmt.Printf(" resources=%d", resourceReads)
+		fmt.Fprintf(w, " resources=%d", resourceReads)
 	}
 	if promptGets > 0 {
-		fmt.Printf(" prompts=%d", promptGets)
+		fmt.Fprintf(w, " prompts=%d", promptGets)
 	}
-	fmt.Println()
+	fmt.Fprintln(w)
 
 	if toolCalls > 0 {
-		printToolCallDetails(history.ToolCalls, opts)
+		printToolCallDetails(w, history.ToolCalls, opts)
 	}
 }
 
-// printToolCallDetails prints detailed tool call output for timeline inspection.
-func printToolCallDetails(calls []*mcpproxy.ToolCall, opts viewOptions) {
-	fmt.Println("    Tool output:")
+// printToolCallDetails writes detailed tool call output for timeline inspection to w.
+func printToolCallDetails(w io.Writer, calls []*mcpproxy.ToolCall, opts viewOptions) {
+	fmt.Fprintln(w, "    Tool output:")
 	for _, call := range calls {
 		status := "ok"
 		if !call.Success {
 			status = "fail"
 		}
 		header := fmt.Sprintf("      • %s::%s (%s)", call.ServerName, call.ToolName, status)
-		fmt.Println(header)
+		fmt.Fprintln(w, header)
 
 		snippet := strings.TrimSpace(extractToolText(call))
 		if snippet == "" {
@@ -316,7 +316,7 @@ func printToolCallDetails(calls []*mcpproxy.ToolCall, opts viewOptions) {
 			if strings.TrimSpace(line) == "" {
 				continue
 			}
-			fmt.Printf("        %s\n", line)
+			fmt.Fprintf(w, "        %s\n", line)
 		}
 	}
 }
@@ -1025,20 +1025,20 @@ func loadTaskPrompt(taskPath string) string {
 	return strings.TrimSpace(text)
 }
 
-// printMultilineField prints a label/value pair, indenting multi-line values neatly.
-func printMultilineField(label, value string) {
+// printMultilineField writes a label/value pair to w, indenting multi-line values neatly.
+func printMultilineField(w io.Writer, label, value string) {
 	value = strings.TrimRight(value, "\n")
 	// Clean up specific artifact from some agent logs where exit status wraps oddly
 	value = strings.ReplaceAll(value, "\n': exit status", " exit status")
 	if !strings.Contains(value, "\n") {
-		fmt.Printf("  %s: %s\n", label, value)
+		fmt.Fprintf(w, "  %s: %s\n", label, value)
 		return
 	}
 
-	fmt.Printf("  %s:\n", label)
+	fmt.Fprintf(w, "  %s:\n", label)
 	lines := mergeContinuationLines(strings.Split(value, "\n"))
 	for _, line := range lines {
-		fmt.Printf("    %s\n", line)
+		fmt.Fprintf(w, "    %s\n", line)
 	}
 }
 
@@ -1074,14 +1074,14 @@ func mergeContinuationLines(lines []string) []string {
 	return merged
 }
 
-// printTimelineLine prints a timeline entry and any subsequent indented lines.
-func printTimelineLine(entry string) {
+// printTimelineLine writes a timeline entry and any subsequent indented lines to w.
+func printTimelineLine(w io.Writer, entry string) {
 	parts := strings.Split(entry, "\n")
 	if len(parts) == 0 {
 		return
 	}
 
-	fmt.Printf("    - %s\n", parts[0])
+	fmt.Fprintf(w, "    - %s\n", parts[0])
 	for _, part := range parts[1:] {
 		if strings.TrimSpace(part) == "" {
 			continue
@@ -1090,6 +1090,6 @@ func printTimelineLine(entry string) {
 		if strings.HasPrefix(clean, "      ") {
 			clean = strings.TrimPrefix(clean, "      ")
 		}
-		fmt.Printf("      %s\n", clean)
+		fmt.Fprintf(w, "      %s\n", clean)
 	}
 }
