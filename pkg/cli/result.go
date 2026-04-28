@@ -18,7 +18,7 @@ These commands operate on the JSON result files produced by 'mcpchecker check'.`
 	resultCmd.AddCommand(NewVerifyCmd())
 	resultCmd.AddCommand(NewSummaryCmd())
 	resultCmd.AddCommand(NewDiffCmd())
-	resultCmd.AddCommand(NewJUnitCmd())
+	resultCmd.AddCommand(NewConvertCmd())
 
 	return resultCmd
 }
