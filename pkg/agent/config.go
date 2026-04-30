@@ -114,6 +114,15 @@ func Read(data []byte) (*AgentSpec, error) {
 		return nil, err
 	}
 
+	if spec.Skills != nil {
+		if spec.Skills.MountPath == "" {
+			return nil, fmt.Errorf("skills.mountPath is required when skills are configured")
+		}
+		if spec.Skills.ToolName == "" {
+			return nil, fmt.Errorf("skills.toolName is required when skills are configured")
+		}
+	}
+
 	return spec, nil
 }
 

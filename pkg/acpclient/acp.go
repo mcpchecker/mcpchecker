@@ -104,18 +104,31 @@ func (c *client) SessionUpdate(ctx context.Context, params acp.SessionNotificati
 //
 // Only available if the client supports the 'fs.readTextFile' capability.
 func (c *client) ReadTextFile(ctx context.Context, params acp.ReadTextFileRequest) (acp.ReadTextFileResponse, error) {
-	if c.cwd == "" {
+	c.mu.RLock()
+	sess, ok := c.sessions[params.SessionId]
+	c.mu.RUnlock()
+
+	if !ok || sess.cwd == "" {
 		return acp.ReadTextFileResponse{}, fmt.Errorf("no fs.readTextFile capability")
 	}
+	cwd := sess.cwd
 
 	if !filepath.IsAbs(params.Path) {
 		return acp.ReadTextFileResponse{}, fmt.Errorf("path must be absolute: %s", params.Path)
 	}
 
-	// Security: scope reads to the agent's working directory
-	cleanPath := filepath.Clean(params.Path)
-	cwdPrefix := filepath.Clean(c.cwd) + string(filepath.Separator)
-	if !strings.HasPrefix(cleanPath, cwdPrefix) && cleanPath != filepath.Clean(c.cwd) {
+	// Security: scope reads to the agent's working directory.
+	// Resolve symlinks so a symlink inside cwd cannot escape the boundary.
+	cleanPath, err := filepath.EvalSymlinks(filepath.Clean(params.Path))
+	if err != nil {
+		return acp.ReadTextFileResponse{}, fmt.Errorf("resolve path %q: %w", params.Path, err)
+	}
+	resolvedCwd, err := filepath.EvalSymlinks(filepath.Clean(cwd))
+	if err != nil {
+		return acp.ReadTextFileResponse{}, fmt.Errorf("resolve working directory: %w", err)
+	}
+	cwdPrefix := resolvedCwd + string(filepath.Separator)
+	if !strings.HasPrefix(cleanPath, cwdPrefix) && cleanPath != resolvedCwd {
 		return acp.ReadTextFileResponse{}, fmt.Errorf("path %q is outside the agent working directory", params.Path)
 	}
 

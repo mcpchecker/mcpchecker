@@ -802,11 +802,11 @@ func evaluateSkillsNotLoaded(assertions []SkillAssertion, toolCalls []agent.Tool
 	return &SingleAssertionResult{Passed: true}
 }
 
-// matchesSkillAssertion checks if the serialized tool call input matches a skill assertion.
-// For exact match (Skill field): checks if the skill name appears as a substring in the input.
+// matchesSkillAssertion checks if the serialized JSON tool call input matches a skill assertion.
+// For exact match (Skill field): checks if the skill name appears as a JSON-quoted string in the input.
 // For pattern match (SkillPattern field): matches the regex against the input.
 func matchesSkillAssertion(serializedInput string, assertion SkillAssertion) bool {
-	if assertion.Skill != "" && strings.Contains(serializedInput, assertion.Skill) {
+	if assertion.Skill != "" && strings.Contains(serializedInput, "\""+assertion.Skill+"\"") {
 		return true
 	}
 

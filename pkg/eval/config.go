@@ -132,7 +132,7 @@ type TaskAssertions struct {
 // Matching is done by searching the serialized RawInput of agent tool calls
 // whose Title matches the configured skill tool name.
 type SkillAssertion struct {
-	// Skill is the exact skill name to match (substring match in tool call input)
+	// Skill is the exact skill name to match (quoted string match in serialized tool call input)
 	Skill string `json:"skill,omitempty"`
 	// SkillPattern is a regex pattern to match against tool call input
 	SkillPattern string `json:"skillPattern,omitempty"`
@@ -203,14 +203,21 @@ func Read(data []byte, basePath string) (*EvalSpec, error) {
 		}
 	}
 
-	// Resolve skill source paths
+	// Resolve and validate skill source paths
 	if spec.Config.Skills != nil {
 		for i := range spec.Config.Skills.Sources {
 			src := &spec.Config.Skills.Sources[i]
-			if src.Type == "path" {
-				if err := resolveFilePath(&src.Path, basePath); err != nil {
-					return nil, fmt.Errorf("failed to resolve skill source path at index %d: %w", i, err)
-				}
+			if src.Type == "" {
+				return nil, fmt.Errorf("skills.sources[%d]: type is required", i)
+			}
+			if src.Type != "path" {
+				return nil, fmt.Errorf("skills.sources[%d]: unsupported type %q (must be \"path\")", i, src.Type)
+			}
+			if src.Path == "" {
+				return nil, fmt.Errorf("skills.sources[%d]: path is required for type \"path\"", i)
+			}
+			if err := resolveFilePath(&src.Path, basePath); err != nil {
+				return nil, fmt.Errorf("failed to resolve skill source path at index %d: %w", i, err)
 			}
 		}
 	}

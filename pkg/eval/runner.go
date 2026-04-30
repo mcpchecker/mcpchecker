@@ -199,6 +199,9 @@ func (r *evalRunner) RunWithProgress(ctx context.Context, taskPattern string, ca
 	}
 
 	// Wire skills into the agent runner if configured
+	if r.spec.Config.Skills != nil && agentSpec.Skills == nil {
+		return nil, fmt.Errorf("eval config defines skills but agent %q has no skills configuration", agentSpec.Metadata.Name)
+	}
 	if r.spec.Config.Skills != nil && agentSpec.Skills != nil {
 		r.skillToolName = agentSpec.Skills.ToolName
 

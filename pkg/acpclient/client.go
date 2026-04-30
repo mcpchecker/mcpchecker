@@ -53,7 +53,6 @@ type client struct {
 	cmd      *exec.Cmd
 	conn     *acp.ClientSideConnection
 	sessions map[acp.SessionId]*session
-	cwd      string // working directory for the current run, used by ReadTextFile
 }
 
 func (c *client) Start(ctx context.Context) error {
@@ -122,12 +121,8 @@ func (c *client) run(ctx context.Context, prompt string, servers mcpproxy.Server
 	}
 
 	defer func() {
-		c.cwd = ""
 		_ = os.RemoveAll(tmpDir)
 	}()
-
-	// Store cwd for ReadTextFile callback
-	c.cwd = tmpDir
 
 	// Mount skills into the temp directory if configured
 	if c.skills != nil {
@@ -171,7 +166,7 @@ func (c *client) run(ctx context.Context, prompt string, servers mcpproxy.Server
 
 	// store the session
 	c.mu.Lock()
-	c.sessions[session.SessionId] = NewSession(servers)
+	c.sessions[session.SessionId] = NewSession(servers, tmpDir)
 	c.mu.Unlock()
 
 	// this runs the current prompt to completion

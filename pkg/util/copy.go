@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // CopyDir recursively copies the contents of src directory into dst directory.
@@ -31,7 +32,14 @@ func CopyDir(src, dst string) error {
 		srcPath := filepath.Join(src, entry.Name())
 		dstPath := filepath.Join(dst, entry.Name())
 
-		if entry.IsDir() {
+		// Resolve symlinks so we copy the target content as regular
+		// files/directories rather than preserving the link itself.
+		info, err := os.Stat(srcPath)
+		if err != nil {
+			return fmt.Errorf("failed to stat %q: %w", srcPath, err)
+		}
+
+		if info.IsDir() {
 			if err := CopyDir(srcPath, dstPath); err != nil {
 				return err
 			}
@@ -52,7 +60,16 @@ func MountSkills(targetDir, mountPath string, sourceDirs []string) error {
 		return nil
 	}
 
-	mountDir := filepath.Join(targetDir, mountPath)
+	if filepath.IsAbs(mountPath) {
+		return fmt.Errorf("skill mount path must be relative, got %q", mountPath)
+	}
+
+	mountDir := filepath.Join(targetDir, filepath.Clean(mountPath))
+	rel, err := filepath.Rel(targetDir, mountDir)
+	if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+		return fmt.Errorf("skill mount path %q escapes target directory", mountPath)
+	}
+
 	if err := os.MkdirAll(mountDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create skill mount directory %q: %w", mountDir, err)
 	}
@@ -66,7 +83,7 @@ func MountSkills(targetDir, mountPath string, sourceDirs []string) error {
 	return nil
 }
 
-func copyFile(src, dst string) error {
+func copyFile(src, dst string) (retErr error) {
 	srcFile, err := os.Open(src)
 	if err != nil {
 		return fmt.Errorf("failed to open source file %q: %w", src, err)
@@ -82,7 +99,11 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create destination file %q: %w", dst, err)
 	}
-	defer dstFile.Close()
+	defer func() {
+		if closeErr := dstFile.Close(); closeErr != nil && retErr == nil {
+			retErr = fmt.Errorf("failed to close destination file %q: %w", dst, closeErr)
+		}
+	}()
 
 	if _, err := io.Copy(dstFile, srcFile); err != nil {
 		return fmt.Errorf("failed to copy %q to %q: %w", src, dst, err)

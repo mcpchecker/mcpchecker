@@ -185,5 +185,5 @@ func newTestSession(allowedTools []*mcp.Tool) *session {
 			&mockServer{name: "test-server", allowedTools: allowedTools},
 		},
 	}
-	return NewSession(mgr)
+	return NewSession(mgr, "")
 }
