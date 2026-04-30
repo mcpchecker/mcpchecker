@@ -52,13 +52,14 @@ Read more in [How It Works](docs/explanation/how-it-works.md).
 
 **How-to guides:**
 - [Configure agents](docs/how-to/configure-agents.md) -- Claude Code, LLM agents, custom agents, ACP mode
-- [Write tasks](docs/how-to/write-tasks.md) -- task structure, labels, filtering, extensions
+- [Write tasks](docs/how-to/write-tasks.md) -- task structure, labels, filtering, extensions, external sources
 - [Use assertions](docs/how-to/use-assertions.md) -- validate tool usage, call order, resource access
 - [LLM judge verification](docs/how-to/llm-judge.md) -- semantic evaluation of agent responses
 - [Parallel execution and multi-run](docs/how-to/parallel-and-multi-run.md) -- speed up evals and test consistency
 
 **Reference:**
 - [CLI commands](docs/reference/cli/mcpchecker.md)
+- [mcpchecker install](docs/reference/cli/mcpchecker_install.md) -- fetch sources and manage the lockfile
 - [Task format](docs/reference/task-format.md)
 - [Output format](docs/reference/output-format.md)
 
