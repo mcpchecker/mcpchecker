@@ -1,11 +1,14 @@
 package eval
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"sort"
+	"strings"
 	"time"
 
+	"github.com/mcpchecker/mcpchecker/pkg/agent"
 	"github.com/mcpchecker/mcpchecker/pkg/mcpproxy"
 )
 
@@ -49,50 +52,38 @@ type CompositeAssertionResult struct {
 	PromptsNotUsed   *SingleAssertionResult `json:"promptsNotUsed,omitempty"`
 	CallOrder        *SingleAssertionResult `json:"callOrder,omitempty"`
 	NoDuplicateCalls *SingleAssertionResult `json:"noDuplicateCalls,omitempty"`
+	SkillsLoaded     *SingleAssertionResult `json:"skillsLoaded,omitempty"`
+	SkillsNotLoaded  *SingleAssertionResult `json:"skillsNotLoaded,omitempty"`
+}
+
+// allFields returns all assertion result pointers for iteration.
+// Update this method when adding new assertion types.
+func (c *CompositeAssertionResult) allFields() []*SingleAssertionResult {
+	return []*SingleAssertionResult{
+		c.ToolsUsed, c.RequireAny, c.ToolsNotUsed,
+		c.MinToolCalls, c.MaxToolCalls, c.ResourcesRead,
+		c.ResourcesNotRead, c.PromptsUsed, c.PromptsNotUsed,
+		c.CallOrder, c.NoDuplicateCalls,
+		c.SkillsLoaded, c.SkillsNotLoaded,
+	}
 }
 
 func (c *CompositeAssertionResult) Succeeded() bool {
-	return c.ToolsUsed.Succeeded() && c.RequireAny.Succeeded() && c.ToolsNotUsed.Succeeded() &&
-		c.MinToolCalls.Succeeded() && c.MaxToolCalls.Succeeded() && c.ResourcesRead.Succeeded() &&
-		c.ResourcesNotRead.Succeeded() && c.PromptsUsed.Succeeded() && c.PromptsNotUsed.Succeeded() &&
-		c.CallOrder.Succeeded() && c.NoDuplicateCalls.Succeeded()
+	for _, f := range c.allFields() {
+		if !f.Succeeded() {
+			return false
+		}
+	}
+	return true
 }
 
 // TotalAssertions returns the total number of individual assertions that were evaluated
 func (c *CompositeAssertionResult) TotalAssertions() int {
 	count := 0
-	if c.ToolsUsed != nil {
-		count++
-	}
-	if c.RequireAny != nil {
-		count++
-	}
-	if c.ToolsNotUsed != nil {
-		count++
-	}
-	if c.MinToolCalls != nil {
-		count++
-	}
-	if c.MaxToolCalls != nil {
-		count++
-	}
-	if c.ResourcesRead != nil {
-		count++
-	}
-	if c.ResourcesNotRead != nil {
-		count++
-	}
-	if c.PromptsUsed != nil {
-		count++
-	}
-	if c.PromptsNotUsed != nil {
-		count++
-	}
-	if c.CallOrder != nil {
-		count++
-	}
-	if c.NoDuplicateCalls != nil {
-		count++
+	for _, f := range c.allFields() {
+		if f != nil {
+			count++
+		}
 	}
 	return count
 }
@@ -100,38 +91,10 @@ func (c *CompositeAssertionResult) TotalAssertions() int {
 // PassedAssertions returns the number of individual assertions that passed
 func (c *CompositeAssertionResult) PassedAssertions() int {
 	count := 0
-	if c.ToolsUsed != nil && c.ToolsUsed.Succeeded() {
-		count++
-	}
-	if c.RequireAny != nil && c.RequireAny.Succeeded() {
-		count++
-	}
-	if c.ToolsNotUsed != nil && c.ToolsNotUsed.Succeeded() {
-		count++
-	}
-	if c.MinToolCalls != nil && c.MinToolCalls.Succeeded() {
-		count++
-	}
-	if c.MaxToolCalls != nil && c.MaxToolCalls.Succeeded() {
-		count++
-	}
-	if c.ResourcesRead != nil && c.ResourcesRead.Succeeded() {
-		count++
-	}
-	if c.ResourcesNotRead != nil && c.ResourcesNotRead.Succeeded() {
-		count++
-	}
-	if c.PromptsUsed != nil && c.PromptsUsed.Succeeded() {
-		count++
-	}
-	if c.PromptsNotUsed != nil && c.PromptsNotUsed.Succeeded() {
-		count++
-	}
-	if c.CallOrder != nil && c.CallOrder.Succeeded() {
-		count++
-	}
-	if c.NoDuplicateCalls != nil && c.NoDuplicateCalls.Succeeded() {
-		count++
+	for _, f := range c.allFields() {
+		if f != nil && f.Succeeded() {
+			count++
+		}
 	}
 	return count
 }
@@ -774,5 +737,83 @@ func (c *CompositeAssertionResult) Merge(other *CompositeAssertionResult) *Compo
 		PromptsNotUsed:   mergeField(c.PromptsNotUsed, other.PromptsNotUsed),
 		CallOrder:        mergeField(c.CallOrder, other.CallOrder),
 		NoDuplicateCalls: mergeField(c.NoDuplicateCalls, other.NoDuplicateCalls),
+		SkillsLoaded:     mergeField(c.SkillsLoaded, other.SkillsLoaded),
+		SkillsNotLoaded:  mergeField(c.SkillsNotLoaded, other.SkillsNotLoaded),
 	}
+}
+
+// collectSkillInputs returns serialized tool call inputs for calls matching toolName.
+func collectSkillInputs(toolCalls []agent.ToolCallSummary, toolName string) []string {
+	var inputs []string
+	for _, tc := range toolCalls {
+		if tc.Title == toolName {
+			if tc.RawInput == nil {
+				continue
+			}
+			if b, err := json.Marshal(tc.RawInput); err == nil {
+				inputs = append(inputs, string(b))
+			}
+		}
+	}
+	return inputs
+}
+
+// evaluateSkillsLoaded checks that all required skills were loaded by the agent.
+func evaluateSkillsLoaded(assertions []SkillAssertion, toolCalls []agent.ToolCallSummary, toolName string) *SingleAssertionResult {
+	skillInputs := collectSkillInputs(toolCalls, toolName)
+
+	for _, assertion := range assertions {
+		found := false
+		for _, input := range skillInputs {
+			if matchesSkillAssertion(input, assertion) {
+				found = true
+				break
+			}
+		}
+
+		if !found {
+			return &SingleAssertionResult{
+				Passed: false,
+				Reason: fmt.Sprintf("Required skill not loaded: skill=%s, pattern=%s",
+					assertion.Skill, assertion.SkillPattern),
+			}
+		}
+	}
+
+	return &SingleAssertionResult{Passed: true}
+}
+
+// evaluateSkillsNotLoaded checks that no forbidden skills were loaded by the agent.
+func evaluateSkillsNotLoaded(assertions []SkillAssertion, toolCalls []agent.ToolCallSummary, toolName string) *SingleAssertionResult {
+	skillInputs := collectSkillInputs(toolCalls, toolName)
+
+	for _, assertion := range assertions {
+		for _, input := range skillInputs {
+			if matchesSkillAssertion(input, assertion) {
+				return &SingleAssertionResult{
+					Passed: false,
+					Reason: fmt.Sprintf("Forbidden skill was loaded: skill=%s, pattern=%s",
+						assertion.Skill, assertion.SkillPattern),
+				}
+			}
+		}
+	}
+
+	return &SingleAssertionResult{Passed: true}
+}
+
+// matchesSkillAssertion checks if the serialized JSON tool call input matches a skill assertion.
+// For exact match (Skill field): checks if the skill name appears as a JSON-quoted string in the input.
+// For pattern match (SkillPattern field): matches the regex against the input.
+func matchesSkillAssertion(serializedInput string, assertion SkillAssertion) bool {
+	if assertion.Skill != "" && strings.Contains(serializedInput, "\""+assertion.Skill+"\"") {
+		return true
+	}
+
+	if assertion.SkillPattern != "" {
+		matched, _ := regexp.MatchString(assertion.SkillPattern, serializedInput)
+		return matched
+	}
+
+	return false
 }

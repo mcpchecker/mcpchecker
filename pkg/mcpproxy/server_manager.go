@@ -39,6 +39,23 @@ type serverManager struct {
 	eg     *errgroup.Group
 }
 
+// NewEmptyServerManager creates a ServerManager with no servers.
+// Used when MCP is not configured (e.g., skill-only evaluations).
+func NewEmptyServerManager() ServerManager {
+	return &emptyServerManager{}
+}
+
+type emptyServerManager struct{}
+
+func (m *emptyServerManager) GetMcpServerFiles() ([]string, error) { return nil, nil }
+func (m *emptyServerManager) GetMcpServers() []Server              { return nil }
+func (m *emptyServerManager) Start(_ context.Context) error        { return nil }
+func (m *emptyServerManager) Close() error                         { return nil }
+func (m *emptyServerManager) GetAllCallHistory() *CallHistory      { return &CallHistory{} }
+func (m *emptyServerManager) GetCallHistoryForServer(_ string) (CallHistory, bool) {
+	return CallHistory{}, false
+}
+
 func NewServerManager(ctx context.Context, manager mcpclient.Manager) (ServerManager, error) {
 	clients := manager.GetAll()
 	servers := make(map[string]Server, len(clients))

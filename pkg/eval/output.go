@@ -14,10 +14,17 @@ type EvalSummary struct {
 	Agent           *AgentSummary      `json:"agent"`
 	Judge           *JudgeSummary      `json:"judge,omitempty"`
 	MCPServers      []MCPServerSummary `json:"mcpServers,omitempty"`
+	Skills          []SkillSummary     `json:"skills,omitempty"`
 	Evals           *EvalsSummary      `json:"evals"`
 	Timeout         *TimeoutSummary    `json:"timeout,omitempty"`
 	ParallelWorkers int                `json:"parallelWorkers"`
 	Runs            int                `json:"runs"`
+}
+
+// SkillSummary describes a configured skill source.
+type SkillSummary struct {
+	Type string `json:"type"`
+	Path string `json:"path,omitempty"`
 }
 
 // AgentSummary describes the agent configuration.

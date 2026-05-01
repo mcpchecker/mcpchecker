@@ -78,6 +78,7 @@ type evalRunner struct {
 	parallelWorkers   int
 	runs              int
 	runsExplicitlySet bool
+	skillToolName     string // agent-specific tool name for skill assertions (e.g., "Skill")
 
 	// Timeout overrides from CLI
 	defaultTaskTimeout    string
@@ -150,8 +151,8 @@ func (r *evalRunner) loadMcpConfig() (*mcpclient.MCPConfig, error) {
 		return config, nil
 	}
 
-	// Neither available
-	return nil, fmt.Errorf("no MCP configuration found: specify mcpConfigFile in eval config or set MCP_URL/MCP_COMMAND environment variables")
+	// Neither available — this is OK if skills are configured
+	return nil, nil
 }
 
 func (r *evalRunner) loadAgentSpec() (*agent.AgentSpec, error) {
@@ -183,6 +184,10 @@ func (r *evalRunner) RunWithProgress(ctx context.Context, taskPattern string, ca
 		return nil, err
 	}
 
+	if mcpConfig == nil && r.spec.Config.Skills == nil {
+		return nil, fmt.Errorf("at least one of MCP config or skills must be configured")
+	}
+
 	agentSpec, err := r.loadAgentSpec()
 	if err != nil {
 		return nil, fmt.Errorf("failed to load agent spec: %w", err)
@@ -191,6 +196,28 @@ func (r *evalRunner) RunWithProgress(ctx context.Context, taskPattern string, ca
 	runner, err := agent.NewRunnerForSpec(agentSpec)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create agent runner from spec: %w", err)
+	}
+
+	// Wire skills into the agent runner if configured
+	if r.spec.Config.Skills != nil && agentSpec.Skills == nil {
+		return nil, fmt.Errorf("eval config defines skills but agent %q has no skills configuration", agentSpec.Metadata.Name)
+	}
+	if r.spec.Config.Skills != nil && agentSpec.Skills != nil {
+		r.skillToolName = agentSpec.Skills.ToolName
+
+		var sourceDirs []string
+		for _, src := range r.spec.Config.Skills.Sources {
+			if src.Type == "path" {
+				sourceDirs = append(sourceDirs, src.Path)
+			}
+		}
+
+		if len(sourceDirs) > 0 {
+			runner = runner.WithSkillInfo(&agent.SkillInfo{
+				MountPath:  agentSpec.Skills.MountPath,
+				SourceDirs: sourceDirs,
+			})
+		}
 	}
 
 	judge, err := llmjudge.NewLLMJudge(r.spec.Config.LLMJudge)
@@ -312,6 +339,16 @@ func (r *evalRunner) buildSummary(agentSpec *agent.AgentSpec, mcpConfig *mcpclie
 				Type:    serverType,
 				URL:     sanitizeURL(server.URL),
 				Command: server.Command,
+			})
+		}
+	}
+
+	// Skills
+	if r.spec.Config.Skills != nil {
+		for _, src := range r.spec.Config.Skills.Sources {
+			summary.Skills = append(summary.Skills, SkillSummary{
+				Type: src.Type,
+				Path: src.Path,
 			})
 		}
 	}
@@ -645,23 +682,26 @@ func (r *evalRunner) executeSingleRun(
 	extResolver resolver.Resolver,
 	tc taskConfig,
 ) *EvalResult {
-	// Create a separate MCP manager for this task
-	taskMcpManager, err := mcpclient.NewManager(ctx, mcpConfig)
-	if err != nil {
-		return &EvalResult{
-			TaskName:   tc.spec.Metadata.Name,
-			TaskPath:   tc.path,
-			Difficulty: tc.spec.Metadata.Difficulty,
-			Parallel:   tc.spec.Metadata.Parallel,
-			TaskPassed: false,
-			TaskError:  fmt.Sprintf("failed to create mcp manager: %v", err),
+	// Create a separate MCP manager for this task (only if MCP is configured)
+	if mcpConfig != nil {
+		taskMcpManager, err := mcpclient.NewManager(ctx, mcpConfig)
+		if err != nil {
+			return &EvalResult{
+				TaskName:   tc.spec.Metadata.Name,
+				TaskPath:   tc.path,
+				Difficulty: tc.spec.Metadata.Difficulty,
+				Parallel:   tc.spec.Metadata.Parallel,
+				TaskPassed: false,
+				TaskError:  fmt.Sprintf("failed to create mcp manager: %v", err),
+			}
 		}
+		defer func() {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			_ = taskMcpManager.Close(cleanupCtx)
+		}()
+		ctx = mcpclient.ManagerToContext(ctx, taskMcpManager)
 	}
-	defer func() {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		_ = taskMcpManager.Close(cleanupCtx)
-	}()
 
 	// Create a separate extension manager for this task
 	taskExtManager := client.NewManager(extResolver, client.ExtensionOptions{})
@@ -685,8 +725,7 @@ func (r *evalRunner) executeSingleRun(
 	}
 
 	// Attach task-specific managers to context
-	taskCtx := mcpclient.ManagerToContext(ctx, taskMcpManager)
-	taskCtx = client.ManagerToContext(taskCtx, taskExtManager)
+	taskCtx := client.ManagerToContext(ctx, taskExtManager)
 
 	result, err := r.runTask(taskCtx, agentRunner, tc)
 	if err != nil && result == nil {
@@ -859,23 +898,24 @@ func (r *evalRunner) setupTaskResources(
 	tc taskConfig,
 	result *EvalResult,
 ) (task.TaskRunner, mcpproxy.ServerManager, func(context.Context), error) {
-	mcpManager, ok := mcpclient.ManagerFromContext(ctx)
-	if !ok {
-		return nil, nil, nil, fmt.Errorf("mcp manager not found in context")
-	}
-
 	taskRunner, err := task.NewTaskRunner(ctx, tc.spec)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to create task runner for task '%s': %w", tc.spec.Metadata.Name, err)
 	}
 
-	manager, err := mcpproxy.NewServerManager(ctx, mcpManager)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to create mcp proxy server manager: %w", err)
-	}
+	var manager mcpproxy.ServerManager
+	mcpManager, ok := mcpclient.ManagerFromContext(ctx)
+	if ok {
+		manager, err = mcpproxy.NewServerManager(ctx, mcpManager)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("failed to create mcp proxy server manager: %w", err)
+		}
 
-	if err := manager.Start(ctx); err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to start mcp proxy servers: %w", err)
+		if err := manager.Start(ctx); err != nil {
+			return nil, nil, nil, fmt.Errorf("failed to start mcp proxy servers: %w", err)
+		}
+	} else {
+		manager = mcpproxy.NewEmptyServerManager()
 	}
 
 	setupOutput, err := taskRunner.Setup(ctx)
@@ -1004,12 +1044,21 @@ func (r *evalRunner) evaluateTaskAssertions(
 	var combinedResults *CompositeAssertionResult
 	allPassed := true
 
+	// Extract agent tool calls for skill assertions
+	var agentToolCalls []agent.ToolCallSummary
+	if result.AgentOutput != nil && result.AgentOutput.AgentDetails != nil {
+		agentToolCalls = result.AgentOutput.AgentDetails.ToolCalls
+	}
+
 	for _, assertions := range tc.assertions {
 		if assertions == nil {
 			continue
 		}
 		evaluator := NewCompositeAssertionEvaluator(assertions)
 		assertionResults := evaluator.Evaluate(callHistory)
+
+		// Evaluate skill assertions against agent tool calls
+		r.evaluateSkillAssertions(assertions, agentToolCalls, assertionResults)
 
 		if combinedResults == nil {
 			combinedResults = assertionResults
@@ -1024,4 +1073,22 @@ func (r *evalRunner) evaluateTaskAssertions(
 
 	result.AssertionResults = combinedResults
 	result.AllAssertionsPassed = allPassed
+}
+
+func (r *evalRunner) evaluateSkillAssertions(
+	assertions *TaskAssertions,
+	toolCalls []agent.ToolCallSummary,
+	results *CompositeAssertionResult,
+) {
+	if r.skillToolName == "" {
+		return
+	}
+
+	if len(assertions.SkillsLoaded) > 0 {
+		results.SkillsLoaded = evaluateSkillsLoaded(assertions.SkillsLoaded, toolCalls, r.skillToolName)
+	}
+
+	if len(assertions.SkillsNotLoaded) > 0 {
+		results.SkillsNotLoaded = evaluateSkillsNotLoaded(assertions.SkillsNotLoaded, toolCalls, r.skillToolName)
+	}
 }

@@ -51,12 +51,30 @@ type EvalConfig struct {
 	McpConfigFile string                       `json:"mcpConfigFile"`
 	LLMJudge      *llmjudge.LLMJudgeEvalConfig `json:"llmJudge"`
 
+	// Skills configuration - defines skill sources to mount for the agent
+	Skills *SkillsConfig `json:"skills,omitempty"`
+
 	// DefaultTaskLimits sets default timeout limits for all tasks in this eval.
 	// Individual tasks can override these via spec.limits.
 	DefaultTaskLimits *util.Limits `json:"defaultTaskLimits,omitempty"`
 
 	// Advanced mode: different assertion sets
 	TaskSets []TaskSet `json:"taskSets,omitempty"`
+}
+
+// SkillsConfig defines skill sources to mount for agent evaluation
+type SkillsConfig struct {
+	// Sources is a list of skill sources to mount
+	Sources []SkillSource `json:"sources"`
+}
+
+// SkillSource defines where to find skill files
+type SkillSource struct {
+	// Type is the source type ("path" for now)
+	Type string `json:"type"`
+
+	// Path to a local directory containing skill files (used when type is "path")
+	Path string `json:"path,omitempty"`
 }
 
 // SourceSpec defines a cross-repo eval source
@@ -104,6 +122,20 @@ type TaskAssertions struct {
 
 	// Efficiency assertions
 	NoDuplicateCalls bool `json:"noDuplicateCalls,omitempty"`
+
+	// Skill assertions - evaluated against agent tool calls
+	SkillsLoaded    []SkillAssertion `json:"skillsLoaded,omitempty"`
+	SkillsNotLoaded []SkillAssertion `json:"skillsNotLoaded,omitempty"`
+}
+
+// SkillAssertion identifies a skill by name or pattern for assertion matching.
+// Matching is done by searching the serialized RawInput of agent tool calls
+// whose Title matches the configured skill tool name.
+type SkillAssertion struct {
+	// Skill is the exact skill name to match (quoted string match in serialized tool call input)
+	Skill string `json:"skill,omitempty"`
+	// SkillPattern is a regex pattern to match against tool call input
+	SkillPattern string `json:"skillPattern,omitempty"`
 }
 
 type ToolAssertion struct {
@@ -168,6 +200,25 @@ func Read(data []byte, basePath string) (*EvalSpec, error) {
 	for name, src := range spec.Config.Sources {
 		if err := validateSourceSpec(name, src); err != nil {
 			return nil, err
+		}
+	}
+
+	// Resolve and validate skill source paths
+	if spec.Config.Skills != nil {
+		for i := range spec.Config.Skills.Sources {
+			src := &spec.Config.Skills.Sources[i]
+			if src.Type == "" {
+				return nil, fmt.Errorf("skills.sources[%d]: type is required", i)
+			}
+			if src.Type != "path" {
+				return nil, fmt.Errorf("skills.sources[%d]: unsupported type %q (must be \"path\")", i, src.Type)
+			}
+			if src.Path == "" {
+				return nil, fmt.Errorf("skills.sources[%d]: path is required for type \"path\"", i)
+			}
+			if err := resolveFilePath(&src.Path, basePath); err != nil {
+				return nil, fmt.Errorf("failed to resolve skill source path at index %d: %w", i, err)
+			}
 		}
 	}
 

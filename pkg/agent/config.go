@@ -19,6 +19,18 @@ type AgentSpec struct {
 	Builtin       *BuiltinRef          `json:"builtin,omitempty"`
 	AcpConfig     *acpclient.AcpConfig `json:"acp,omitempty"` // if builtin and acp are both set, default to acp
 	Commands      AgentCommands        `json:"commands"`
+	Skills        *AgentSkillsConfig   `json:"skills,omitempty"`
+}
+
+// AgentSkillsConfig defines agent-specific skill loading behavior
+type AgentSkillsConfig struct {
+	// MountPath is the relative path within the agent's working directory
+	// where skill files should be placed (e.g., ".claude/skills" for Claude Code)
+	MountPath string `json:"mountPath"`
+
+	// ToolName is the agent-specific tool name used to load skills
+	// (e.g., "Skill" for Claude Code)
+	ToolName string `json:"toolName"`
 }
 
 // AgentRef specifies how to configure the agent
@@ -100,6 +112,15 @@ func Read(data []byte) (*AgentSpec, error) {
 
 	if err := spec.TypeMeta.Validate(KindAgent); err != nil {
 		return nil, err
+	}
+
+	if spec.Skills != nil {
+		if spec.Skills.MountPath == "" {
+			return nil, fmt.Errorf("skills.mountPath is required when skills are configured")
+		}
+		if spec.Skills.ToolName == "" {
+			return nil, fmt.Errorf("skills.toolName is required when skills are configured")
+		}
 	}
 
 	return spec, nil

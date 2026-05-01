@@ -77,9 +77,13 @@ func NewTaskRunner(ctx context.Context, cfg *TaskConfig) (TaskRunner, error) {
 		return nil, fmt.Errorf("failed to get extension manager from context")
 	}
 
-	mcpClientManager, ok := mcpclient.ManagerFromContext(ctx)
-	if !ok {
-		return nil, fmt.Errorf("failed to get mcpclient manager from context")
+	mcpClientManager, hasMcpManager := mcpclient.ManagerFromContext(ctx)
+	if !hasMcpManager {
+		for _, req := range cfg.Spec.Requires {
+			if req.McpServer != nil {
+				return nil, fmt.Errorf("task requires mcpServer %q but no MCP manager is configured", *req.McpServer)
+			}
+		}
 	}
 
 	extensions := make(map[string]string)

@@ -12,6 +12,7 @@ type acpRunner struct {
 	name       string
 	cfg        *acpclient.AcpConfig
 	mcpServers mcpproxy.ServerManager
+	skills     *SkillInfo
 }
 
 var _ Runner = &acpRunner{}
@@ -24,7 +25,7 @@ func NewAcpRunner(cfg *acpclient.AcpConfig, name string) Runner {
 }
 
 func (r *acpRunner) RunTask(ctx context.Context, prompt string) (AgentResult, error) {
-	client := acpclient.NewClient(ctx, r.cfg)
+	client := acpclient.NewClient(ctx, r.cfg, r.skills.ClientOptions()...)
 	defer client.Close(ctx)
 
 	err := client.Start(ctx)
@@ -49,6 +50,16 @@ func (r *acpRunner) WithMcpServerInfo(mcpServers mcpproxy.ServerManager) Runner 
 		name:       r.name,
 		cfg:        r.cfg,
 		mcpServers: mcpServers,
+		skills:     r.skills,
+	}
+}
+
+func (r *acpRunner) WithSkillInfo(skills *SkillInfo) Runner {
+	return &acpRunner{
+		name:       r.name,
+		cfg:        r.cfg,
+		mcpServers: r.mcpServers,
+		skills:     skills,
 	}
 }
 
