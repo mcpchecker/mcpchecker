@@ -7,6 +7,7 @@ import (
 	"os"
 	"sync"
 
+	"github.com/genmcp/gen-mcp/pkg/template"
 	"github.com/mcpchecker/mcpchecker/pkg/extension"
 	"github.com/mcpchecker/mcpchecker/pkg/extension/protocol"
 	"github.com/mcpchecker/mcpchecker/pkg/extension/resolver"
@@ -81,9 +82,9 @@ func (m *extensionManager) Get(ctx context.Context, alias string) (Client, error
 		return nil, err
 	}
 
-	env := os.Environ()
-	for k, v := range spec.Env {
-		env = append(env, fmt.Sprintf("%s=%s", k, v))
+	env, err := expandEnv(spec.Env)
+	if err != nil {
+		return nil, err
 	}
 
 	c := New(Options{
@@ -96,8 +97,13 @@ func (m *extensionManager) Get(ctx context.Context, alias string) (Client, error
 		Env: env,
 	})
 
+	expandedConfig, err := expandConfig(spec.Config)
+	if err != nil {
+		return nil, err
+	}
+
 	if err := c.Start(ctx, &protocol.InitializeParams{
-		Config: spec.Config,
+		Config: expandedConfig,
 	}); err != nil {
 		return nil, err
 	}
@@ -139,4 +145,105 @@ func ManagerToContext(ctx context.Context, manager ExtensionManager) context.Con
 func ManagerFromContext(ctx context.Context) (ExtensionManager, bool) {
 	manager, ok := ctx.Value(managerKey{}).(ExtensionManager)
 	return manager, ok
+}
+
+// expandEnv resolves template references in the given env map and returns
+// the result merged with the current OS environment as KEY=VALUE pairs.
+func expandEnv(envMap map[string]string) ([]string, error) {
+	env := os.Environ()
+	for k, v := range envMap {
+		result, err := expandTemplate(v)
+		if err != nil {
+			return nil, err
+		}
+		str, ok := result.(string)
+		if !ok {
+			return nil, fmt.Errorf("env template resolved to non-string type: %T", result)
+		}
+		env = append(env, fmt.Sprintf("%s=%s", k, str))
+	}
+	return env, nil
+}
+
+// expandConfig returns a deep copy of config with all string values resolved
+// through template expansion, iterating nested maps and slices.
+func expandConfig(config map[string]any) (map[string]any, error) {
+	if config == nil {
+		return nil, nil
+	}
+
+	expanded := make(map[string]any, len(config))
+	for k, v := range config {
+		expanded[k] = v
+	}
+
+	stack := []any{expanded}
+	for len(stack) > 0 {
+		current := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+
+		switch c := current.(type) {
+		case map[string]any:
+			for k, v := range c {
+				switch t := v.(type) {
+				case string:
+					result, err := expandTemplate(t)
+					if err != nil {
+						return nil, err
+					}
+					c[k] = result
+				case map[string]any:
+					clone := make(map[string]any, len(t))
+					for ck, cv := range t {
+						clone[ck] = cv
+					}
+					c[k] = clone
+					stack = append(stack, clone)
+				case []any:
+					clone := make([]any, len(t))
+					copy(clone, t)
+					c[k] = clone
+					stack = append(stack, clone)
+				}
+			}
+		case []any:
+			for i, v := range c {
+				switch t := v.(type) {
+				case string:
+					result, err := expandTemplate(t)
+					if err != nil {
+						return nil, err
+					}
+					c[i] = result
+				case map[string]any:
+					clone := make(map[string]any, len(t))
+					for ck, cv := range t {
+						clone[ck] = cv
+					}
+					c[i] = clone
+					stack = append(stack, clone)
+				case []any:
+					clone := make([]any, len(t))
+					copy(clone, t)
+					c[i] = clone
+					stack = append(stack, clone)
+				}
+			}
+		}
+	}
+
+	return expanded, nil
+}
+
+// expandTemplate parses and resolves a template string, returning the expanded value.
+func expandTemplate(s string) (any, error) {
+	parsed, err := template.ParseTemplate(s, template.TemplateParserOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse template: %w", err)
+	}
+	builder, err := template.NewTemplateBuilder(parsed, false)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create template builder: %w", err)
+	}
+	return builder.GetResult()
 }
