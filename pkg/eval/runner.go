@@ -188,6 +188,22 @@ func (r *evalRunner) RunWithProgress(ctx context.Context, taskPattern string, ca
 		return nil, fmt.Errorf("at least one of MCP config or skills must be configured")
 	}
 
+	// Create a single shared MCP manager for the entire evaluation run.
+	// Individual tasks create their own proxy servers on top of these shared
+	// client connections for recording/isolation.
+	if mcpConfig != nil {
+		mcpManager, err := mcpclient.NewManager(ctx, mcpConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to connect to MCP servers: %w", err)
+		}
+		defer func() {
+			closeCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			_ = mcpManager.Close(closeCtx)
+		}()
+		ctx = mcpclient.ManagerToContext(ctx, mcpManager)
+	}
+
 	agentSpec, err := r.loadAgentSpec()
 	if err != nil {
 		return nil, fmt.Errorf("failed to load agent spec: %w", err)
@@ -238,7 +254,7 @@ func (r *evalRunner) RunWithProgress(ctx context.Context, taskPattern string, ca
 	}
 
 	// Build summary from resolved configuration
-	summary := r.buildSummary(agentSpec, mcpConfig, judge, taskConfigs)
+	summary := r.buildSummary(ctx, agentSpec, mcpConfig, judge, taskConfigs)
 
 	r.progressCallback(ProgressEvent{
 		Type:    EventEvalStart,
@@ -258,7 +274,7 @@ func (r *evalRunner) RunWithProgress(ctx context.Context, taskPattern string, ca
 			workerLimit = r.parallelWorkers
 		}
 
-		groupResults := r.runTaskGroup(ctx, runner, mcpConfig, resolver, group.tasks, workerLimit)
+		groupResults := r.runTaskGroup(ctx, runner, resolver, group.tasks, workerLimit)
 		results = append(results, groupResults...)
 	}
 
@@ -273,7 +289,13 @@ func (r *evalRunner) RunWithProgress(ctx context.Context, taskPattern string, ca
 	}, nil
 }
 
-func (r *evalRunner) buildSummary(agentSpec *agent.AgentSpec, mcpConfig *mcpclient.MCPConfig, judge llmjudge.LLMJudge, taskConfigs []taskConfig) *EvalSummary {
+func (r *evalRunner) buildSummary(
+	ctx context.Context,
+	agentSpec *agent.AgentSpec,
+	mcpConfig *mcpclient.MCPConfig,
+	judge llmjudge.LLMJudge,
+	taskConfigs []taskConfig,
+) *EvalSummary {
 	summary := &EvalSummary{
 		ParallelWorkers: r.parallelWorkers,
 		Runs:            r.runs,
@@ -321,6 +343,8 @@ func (r *evalRunner) buildSummary(agentSpec *agent.AgentSpec, mcpConfig *mcpclie
 
 	// MCP servers (sorted by name for deterministic output)
 	if mcpConfig != nil {
+		mcpManager, _ := mcpclient.ManagerFromContext(ctx)
+
 		servers := mcpConfig.GetEnabledServers()
 		names := make([]string, 0, len(servers))
 		for name := range servers {
@@ -334,12 +358,24 @@ func (r *evalRunner) buildSummary(agentSpec *agent.AgentSpec, mcpConfig *mcpclie
 			if server.IsHttp() {
 				serverType = "http"
 			}
-			summary.MCPServers = append(summary.MCPServers, MCPServerSummary{
+			serverSummary := MCPServerSummary{
 				Name:    name,
 				Type:    serverType,
 				URL:     sanitizeURL(server.URL),
 				Command: server.Command,
-			})
+			}
+			if mcpManager != nil {
+				if c, ok := mcpManager.Get(name); ok {
+					for _, tool := range c.GetAllowedTools(ctx) {
+						serverSummary.Tools = append(serverSummary.Tools, ToolSummary{
+							Name:        tool.Name,
+							Description: tool.Description,
+							InputSchema: tool.InputSchema,
+						})
+					}
+				}
+			}
+			summary.MCPServers = append(summary.MCPServers, serverSummary)
 		}
 	}
 
@@ -513,11 +549,11 @@ func groupTasksByParallelSupport(tasks []taskConfig) []taskGroup {
 }
 
 // runTaskGroup runs a group of tasks with the specified worker limit.
-// Each task gets its own MCP and extension managers to ensure isolation.
+// Each task gets its own proxy servers and extension managers to ensure isolation,
+// while sharing the underlying MCP client connections from the context.
 func (r *evalRunner) runTaskGroup(
 	ctx context.Context,
 	agentRunner agent.Runner,
-	mcpConfig *mcpclient.MCPConfig,
 	extResolver resolver.Resolver,
 	tasks []taskConfig,
 	workerLimit int,
@@ -537,7 +573,7 @@ func (r *evalRunner) runTaskGroup(
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			taskResults := r.executeTask(ctx, agentRunner, mcpConfig, extResolver, tc)
+			taskResults := r.executeTask(ctx, agentRunner, extResolver, tc)
 
 			mu.Lock()
 			allResults = append(allResults, taskResults...)
@@ -656,7 +692,6 @@ func (r *evalRunner) resolveCleanupTimeout(tc taskConfig) (time.Duration, bool, 
 func (r *evalRunner) executeTask(
 	ctx context.Context,
 	agentRunner agent.Runner,
-	mcpConfig *mcpclient.MCPConfig,
 	extResolver resolver.Resolver,
 	tc taskConfig,
 ) []*EvalResult {
@@ -664,7 +699,7 @@ func (r *evalRunner) executeTask(
 	results := make([]*EvalResult, 0, runs)
 
 	for runIdx := 0; runIdx < runs; runIdx++ {
-		result := r.executeSingleRun(ctx, agentRunner, mcpConfig, extResolver, tc)
+		result := r.executeSingleRun(ctx, agentRunner, extResolver, tc)
 		result.RunIndex = runIdx
 		result.TotalRuns = runs
 		results = append(results, result)
@@ -673,36 +708,16 @@ func (r *evalRunner) executeTask(
 	return results
 }
 
-// executeSingleRun runs a single task execution with its own isolated MCP and extension managers.
+// executeSingleRun runs a single task execution with its own isolated proxy servers
+// and extension managers. The underlying MCP client connections are shared via the
+// context; each task gets its own proxy layer for call recording and isolation.
 // Always returns a result, even on error.
 func (r *evalRunner) executeSingleRun(
 	ctx context.Context,
 	agentRunner agent.Runner,
-	mcpConfig *mcpclient.MCPConfig,
 	extResolver resolver.Resolver,
 	tc taskConfig,
 ) *EvalResult {
-	// Create a separate MCP manager for this task (only if MCP is configured)
-	if mcpConfig != nil {
-		taskMcpManager, err := mcpclient.NewManager(ctx, mcpConfig)
-		if err != nil {
-			return &EvalResult{
-				TaskName:   tc.spec.Metadata.Name,
-				TaskPath:   tc.path,
-				Difficulty: tc.spec.Metadata.Difficulty,
-				Parallel:   tc.spec.Metadata.Parallel,
-				TaskPassed: false,
-				TaskError:  fmt.Sprintf("failed to create mcp manager: %v", err),
-			}
-		}
-		defer func() {
-			cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			_ = taskMcpManager.Close(cleanupCtx)
-		}()
-		ctx = mcpclient.ManagerToContext(ctx, taskMcpManager)
-	}
-
 	// Create a separate extension manager for this task
 	taskExtManager := client.NewManager(extResolver, client.ExtensionOptions{})
 	defer func() {
