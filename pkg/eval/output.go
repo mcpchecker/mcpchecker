@@ -47,10 +47,18 @@ type JudgeSummary struct {
 
 // MCPServerSummary describes a single MCP server.
 type MCPServerSummary struct {
-	Name    string `json:"name"`
-	Type    string `json:"type"`
-	URL     string `json:"url,omitempty"`
-	Command string `json:"command,omitempty"`
+	Name    string        `json:"name"`
+	Type    string        `json:"type"`
+	URL     string        `json:"url,omitempty"`
+	Command string        `json:"command,omitempty"`
+	Tools   []ToolSummary `json:"tools,omitempty"`
+}
+
+// ToolSummary describes a single tool exposed by an MCP server.
+type ToolSummary struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	InputSchema any    `json:"inputSchema,omitempty"`
 }
 
 // EvalsSummary describes the matched evaluations.
