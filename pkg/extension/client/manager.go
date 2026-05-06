@@ -83,8 +83,12 @@ func (m *extensionManager) Get(ctx context.Context, alias string) (Client, error
 	// Use singleflight so only one goroutine resolves + starts a given extension,
 	// while concurrent callers for the same alias wait and share the result.
 	// Callers requesting *different* aliases proceed concurrently.
-	v, err, _ := m.group.Do(alias, func() (any, error) {
-		binaryPath, err := m.resolver.Resolve(ctx, spec.Package)
+	// DoChan + detached context ensures the leader's deadline doesn't cancel
+	// startup for all waiters; each caller can bail on its own ctx independently.
+	ch := m.group.DoChan(alias, func() (any, error) {
+		startupCtx := context.Background()
+
+		binaryPath, err := m.resolver.Resolve(startupCtx, spec.Package)
 		if err != nil {
 			return nil, err
 		}
@@ -109,7 +113,7 @@ func (m *extensionManager) Get(ctx context.Context, alias string) (Client, error
 			return nil, err
 		}
 
-		if err := c.Start(ctx, &protocol.InitializeParams{
+		if err := c.Start(startupCtx, &protocol.InitializeParams{
 			Config: expandedConfig,
 		}); err != nil {
 			return nil, err
@@ -121,11 +125,16 @@ func (m *extensionManager) Get(ctx context.Context, alias string) (Client, error
 
 		return c, nil
 	})
-	if err != nil {
-		return nil, err
-	}
 
-	return v.(Client), nil
+	select {
+	case res := <-ch:
+		if res.Err != nil {
+			return nil, res.Err
+		}
+		return res.Val.(Client), nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 func (m *extensionManager) Has(alias string) bool {
