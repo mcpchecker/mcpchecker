@@ -246,6 +246,21 @@ func (r *evalRunner) RunWithProgress(ctx context.Context, taskPattern string, ca
 		BasePath: r.spec.BasePath(),
 	})
 
+	// Create a shared extension manager for all tasks
+	extManager := client.NewManager(resolver, client.ExtensionOptions{})
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = extManager.ShutdownAll(cleanupCtx)
+	}()
+
+	for alias, ext := range r.spec.Config.Extensions {
+		if err := extManager.Register(alias, ext); err != nil {
+			return nil, fmt.Errorf("failed to register extension %s: %w", alias, err)
+		}
+	}
+
+	ctx = client.ManagerToContext(ctx, extManager)
 	ctx = llmjudge.WithJudge(ctx, judge)
 
 	taskConfigs, err := r.collectTaskConfigs(taskMatcher)
@@ -274,7 +289,7 @@ func (r *evalRunner) RunWithProgress(ctx context.Context, taskPattern string, ca
 			workerLimit = r.parallelWorkers
 		}
 
-		groupResults := r.runTaskGroup(ctx, runner, resolver, group.tasks, workerLimit)
+		groupResults := r.runTaskGroup(ctx, runner, group.tasks, workerLimit)
 		results = append(results, groupResults...)
 	}
 
@@ -549,12 +564,11 @@ func groupTasksByParallelSupport(tasks []taskConfig) []taskGroup {
 }
 
 // runTaskGroup runs a group of tasks with the specified worker limit.
-// Each task gets its own proxy servers and extension managers to ensure isolation,
-// while sharing the underlying MCP client connections from the context.
+// Both MCP client connections and extension manager are shared via context;
+// per-task proxy servers handle call recording and isolation.
 func (r *evalRunner) runTaskGroup(
 	ctx context.Context,
 	agentRunner agent.Runner,
-	extResolver resolver.Resolver,
 	tasks []taskConfig,
 	workerLimit int,
 ) []*EvalResult {
@@ -573,7 +587,7 @@ func (r *evalRunner) runTaskGroup(
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			taskResults := r.executeTask(ctx, agentRunner, extResolver, tc)
+			taskResults := r.executeTask(ctx, agentRunner, tc)
 
 			mu.Lock()
 			allResults = append(allResults, taskResults...)
@@ -692,14 +706,13 @@ func (r *evalRunner) resolveCleanupTimeout(tc taskConfig) (time.Duration, bool, 
 func (r *evalRunner) executeTask(
 	ctx context.Context,
 	agentRunner agent.Runner,
-	extResolver resolver.Resolver,
 	tc taskConfig,
 ) []*EvalResult {
 	runs := r.getRunsForTask(tc)
 	results := make([]*EvalResult, 0, runs)
 
 	for runIdx := 0; runIdx < runs; runIdx++ {
-		result := r.executeSingleRun(ctx, agentRunner, extResolver, tc)
+		result := r.executeSingleRun(ctx, agentRunner, tc)
 		result.RunIndex = runIdx
 		result.TotalRuns = runs
 		results = append(results, result)
@@ -708,41 +721,16 @@ func (r *evalRunner) executeTask(
 	return results
 }
 
-// executeSingleRun runs a single task execution with its own isolated proxy servers
-// and extension managers. The underlying MCP client connections are shared via the
-// context; each task gets its own proxy layer for call recording and isolation.
+// executeSingleRun runs a single task execution.
+// MCP client connections and extension manager are shared via context;
+// per-task proxy servers handle call recording and isolation.
 // Always returns a result, even on error.
 func (r *evalRunner) executeSingleRun(
 	ctx context.Context,
 	agentRunner agent.Runner,
-	extResolver resolver.Resolver,
 	tc taskConfig,
 ) *EvalResult {
-	// Create a separate extension manager for this task
-	taskExtManager := client.NewManager(extResolver, client.ExtensionOptions{})
-	defer func() {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		_ = taskExtManager.ShutdownAll(cleanupCtx)
-	}()
-
-	for alias, ext := range r.spec.Config.Extensions {
-		if err := taskExtManager.Register(alias, ext); err != nil {
-			return &EvalResult{
-				TaskName:   tc.spec.Metadata.Name,
-				TaskPath:   tc.path,
-				Difficulty: tc.spec.Metadata.Difficulty,
-				Parallel:   tc.spec.Metadata.Parallel,
-				TaskPassed: false,
-				TaskError:  fmt.Sprintf("failed to register extension %s: %v", alias, err),
-			}
-		}
-	}
-
-	// Attach task-specific managers to context
-	taskCtx := client.ManagerToContext(ctx, taskExtManager)
-
-	result, err := r.runTask(taskCtx, agentRunner, tc)
+	result, err := r.runTask(ctx, agentRunner, tc)
 	if err != nil && result == nil {
 		return &EvalResult{
 			TaskName:   tc.spec.Metadata.Name,

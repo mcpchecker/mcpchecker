@@ -11,6 +11,7 @@ import (
 	"github.com/mcpchecker/mcpchecker/pkg/extension"
 	"github.com/mcpchecker/mcpchecker/pkg/extension/protocol"
 	"github.com/mcpchecker/mcpchecker/pkg/extension/resolver"
+	"golang.org/x/sync/singleflight"
 )
 
 type ExtensionManager interface {
@@ -30,6 +31,7 @@ type extensionManager struct {
 	specs    map[string]*extension.ExtensionSpec
 	resolver resolver.Resolver
 	opts     ExtensionOptions
+	group    singleflight.Group
 }
 
 type ExtensionOptions struct {
@@ -65,51 +67,74 @@ func (m *extensionManager) Register(alias string, spec *extension.ExtensionSpec)
 }
 
 func (m *extensionManager) Get(ctx context.Context, alias string) (Client, error) {
+	// Fast path: return cached client without blocking other callers
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	if c, ok := m.clients[alias]; ok {
+		m.mu.Unlock()
 		return c, nil
 	}
-
 	spec, ok := m.specs[alias]
+	m.mu.Unlock()
+
 	if !ok {
 		return nil, fmt.Errorf("no extension registered for alias %q", alias)
 	}
 
-	binaryPath, err := m.resolver.Resolve(ctx, spec.Package)
-	if err != nil {
-		return nil, err
-	}
+	// Use singleflight so only one goroutine resolves + starts a given extension,
+	// while concurrent callers for the same alias wait and share the result.
+	// Callers requesting *different* aliases proceed concurrently.
+	// DoChan + detached context ensures the leader's deadline doesn't cancel
+	// startup for all waiters; each caller can bail on its own ctx independently.
+	ch := m.group.DoChan(alias, func() (any, error) {
+		startupCtx := context.Background()
 
-	env, err := expandEnv(spec.Env)
-	if err != nil {
-		return nil, err
-	}
+		binaryPath, err := m.resolver.Resolve(startupCtx, spec.Package)
+		if err != nil {
+			return nil, err
+		}
 
-	c := New(Options{
-		BinaryPath: binaryPath,
-		LogHandler: func(level, message string, data map[string]any) {
-			if m.opts.LogHandler != nil {
-				m.opts.LogHandler(spec.Package, level, message, data)
-			}
-		},
-		Env: env,
+		env, err := expandEnv(spec.Env)
+		if err != nil {
+			return nil, err
+		}
+
+		c := New(Options{
+			BinaryPath: binaryPath,
+			LogHandler: func(level, message string, data map[string]any) {
+				if m.opts.LogHandler != nil {
+					m.opts.LogHandler(spec.Package, level, message, data)
+				}
+			},
+			Env: env,
+		})
+
+		expandedConfig, err := expandConfig(spec.Config)
+		if err != nil {
+			return nil, err
+		}
+
+		if err := c.Start(startupCtx, &protocol.InitializeParams{
+			Config: expandedConfig,
+		}); err != nil {
+			return nil, err
+		}
+
+		m.mu.Lock()
+		m.clients[alias] = c
+		m.mu.Unlock()
+
+		return c, nil
 	})
 
-	expandedConfig, err := expandConfig(spec.Config)
-	if err != nil {
-		return nil, err
+	select {
+	case res := <-ch:
+		if res.Err != nil {
+			return nil, res.Err
+		}
+		return res.Val.(Client), nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
-
-	if err := c.Start(ctx, &protocol.InitializeParams{
-		Config: expandedConfig,
-	}); err != nil {
-		return nil, err
-	}
-
-	m.clients[alias] = c
-	return c, nil
 }
 
 func (m *extensionManager) Has(alias string) bool {
