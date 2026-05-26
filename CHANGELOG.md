@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Token usage comparison in diff command (total tokens and MCP schema tokens)
+- `mcpchecker install` command to fetch external task sources and record a lockfile (`mcpchecker.lock`) pinning each source to a specific commit SHA and content hash
+- `mcpchecker install source <name>` and `mcpchecker install extension <name>` subcommands for selectively refreshing a single dependency
+- `--update` flag on all `install` subcommands to re-resolve refs to current commits
+- `--no-lock` flag on `mcpchecker check` to skip lockfile validation and run against the latest source state without fetching
+- `sources` block in eval config for declaring external GitHub task repositories; `check` auto-fetches sources not yet in the lockfile
+- `source` field on `taskSets` entries to pull tasks from a named external source instead of a local path
+- `serverMapping` field on `taskSets` entries (and `sources` entries) to remap MCP server names used in external tasks to local server names in your MCP config; prompted interactively during `mcpchecker install` when names don't match
 
 ### Changed
 
