@@ -173,8 +173,10 @@ func installSource(
 	needsFetch := update || !hasLocked
 
 	var commit string
+	var contentHash string
 	if !needsFetch {
 		commit = locked.Commit
+		contentHash = locked.Hash
 		fmt.Fprintf(stdout, "source %s: locked at %s (use --update to refresh)\n", name, shortSHA(commit))
 	} else {
 		fmt.Fprintf(stdout, "source %s: resolving %s ...\n", name, describeRef(src.Ref))
@@ -185,8 +187,6 @@ func installSource(
 		}
 		fmt.Fprintf(stdout, "source %s: resolved to %s\n", name, shortSHA(commit))
 	}
-
-	var contentHash string
 
 	// Only fetch source content when serverMapping hasn't been configured yet.
 	if len(src.ServerMapping) == 0 {
