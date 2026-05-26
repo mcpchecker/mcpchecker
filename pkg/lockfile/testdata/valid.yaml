@@ -1,0 +1,14 @@
+version: 1
+sources:
+  upstream:
+    repo: github.com/org/repo
+    ref: main
+    commit: abc123def456789012345678901234567890abcd
+    hash: sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+    fetchedAt: "2025-01-15T10:30:00Z"
+extensions:
+  my-ext:
+    package: github.com/org/ext
+    version: v1.2.3
+    hash: sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2
+    fetchedAt: "2025-01-15T10:30:00Z"

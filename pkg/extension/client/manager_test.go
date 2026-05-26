@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
 
 	"github.com/mcpchecker/mcpchecker/pkg/extension"
@@ -244,4 +245,161 @@ func TestManagerContext(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestExpandEnv(t *testing.T) {
+	t.Setenv("KEY1", "value1")
+	t.Setenv("KEY2", "value2")
+
+	tt := map[string]struct {
+		envMap    map[string]string
+		wantPairs []string
+		wantErr   bool
+	}{
+		"nil map returns os environ only": {
+			envMap:    nil,
+			wantPairs: nil,
+		},
+		"plain values": {
+			envMap:    map[string]string{"KEY1": "val1", "KEY2": "val2"},
+			wantPairs: []string{"KEY1=val1", "KEY2=val2"},
+		},
+		"template references": {
+			envMap:    map[string]string{"MY_KEY1": "${KEY1}", "MY_KEY2": "{env.KEY2}"},
+			wantPairs: []string{"MY_KEY1=value1", "MY_KEY2=value2"},
+		},
+		"mixed plain and template": {
+			envMap:    map[string]string{"A": "plain", "B": "prefix-{env.KEY1}"},
+			wantPairs: []string{"A=plain", "B=prefix-value1"},
+		},
+	}
+
+	for tn, tc := range tt {
+		t.Run(tn, func(t *testing.T) {
+			result, err := expandEnv(tc.envMap)
+			if tc.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+
+			// Result should contain the OS environ
+			assert.True(t, len(result) >= len(os.Environ()))
+
+			for _, pair := range tc.wantPairs {
+				assert.True(t, containsEntry(result, pair),
+					"expected %q in result", pair)
+			}
+		})
+	}
+}
+
+func TestExpandConfig(t *testing.T) {
+	t.Setenv("EXPAND_CFG_TEST", "cfg-value")
+
+	tt := map[string]struct {
+		config  map[string]any
+		want    map[string]any
+		wantErr bool
+	}{
+		"nil config": {
+			config: nil,
+			want:   nil,
+		},
+		"plain strings unchanged": {
+			config: map[string]any{"key": "hello"},
+			want:   map[string]any{"key": "hello"},
+		},
+		"non-string values unchanged": {
+			config: map[string]any{"count": 42, "enabled": true},
+			want:   map[string]any{"count": 42, "enabled": true},
+		},
+		"template in top-level string": {
+			config: map[string]any{"path": "${EXPAND_CFG_TEST}", "path2": "{env.EXPAND_CFG_TEST}"},
+			want:   map[string]any{"path": "cfg-value", "path2": "cfg-value"},
+		},
+		"nested map with template": {
+			config: map[string]any{
+				"outer": map[string]any{
+					"inner":     "${EXPAND_CFG_TEST}",
+					"plain":     "keep",
+					"nonstring": 123,
+				},
+			},
+			want: map[string]any{
+				"outer": map[string]any{
+					"inner":     "cfg-value",
+					"plain":     "keep",
+					"nonstring": 123,
+				},
+			},
+		},
+		"slice with template strings": {
+			config: map[string]any{
+				"items": []any{"{env.EXPAND_CFG_TEST}", "static"},
+			},
+			want: map[string]any{
+				"items": []any{"cfg-value", "static"},
+			},
+		},
+		"deeply nested mixed structure": {
+			config: map[string]any{
+				"level1": map[string]any{
+					"level2": []any{
+						map[string]any{"val": "{env.EXPAND_CFG_TEST}"},
+						"literal",
+					},
+				},
+			},
+			want: map[string]any{
+				"level1": map[string]any{
+					"level2": []any{
+						map[string]any{"val": "cfg-value"},
+						"literal",
+					},
+				},
+			},
+		},
+	}
+
+	for tn, tc := range tt {
+		t.Run(tn, func(t *testing.T) {
+			result, err := expandConfig(tc.config)
+			if tc.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, result)
+		})
+	}
+}
+
+func TestExpandConfig_DoesNotMutateOriginal(t *testing.T) {
+	t.Setenv("EXPAND_MUTATE_TEST", "replaced")
+
+	original := map[string]any{
+		"key": "${EXPAND_MUTATE_TEST}",
+		"nested": map[string]any{
+			"inner": "${EXPAND_MUTATE_TEST}",
+		},
+	}
+
+	result, err := expandConfig(original)
+	require.NoError(t, err)
+
+	assert.Equal(t, "replaced", result["key"])
+	assert.Equal(t, "${EXPAND_MUTATE_TEST}", original["key"], "original top-level value should not be modified")
+
+	origNested := original["nested"].(map[string]any)
+	assert.Equal(t, "${EXPAND_MUTATE_TEST}", origNested["inner"], "original nested value should not be modified")
+}
+
+func containsEntry(env []string, entry string) bool {
+	for _, e := range env {
+		if e == entry {
+			return true
+		}
+	}
+	return false
 }

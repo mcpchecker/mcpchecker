@@ -1,0 +1,7 @@
+version: 1
+extensions:
+  my-ext:
+    package: github.com/org/ext
+    version: v1.0.0
+    hash: sha256:tooshort
+    fetchedAt: "2025-01-15T10:30:00Z"

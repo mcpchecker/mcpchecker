@@ -306,7 +306,7 @@ func TestLoadMcpConfig(t *testing.T) {
 				assert.Equal(t, "http://localhost:9090/mcp", server.URL)
 			},
 		},
-		"error when neither config file nor env vars available": {
+		"nil config when neither config file nor env vars available": {
 			setupEnv:   clearEnv,
 			cleanupEnv: clearEnv,
 			spec: &EvalSpec{
@@ -314,8 +314,9 @@ func TestLoadMcpConfig(t *testing.T) {
 					McpConfigFile: "",
 				},
 			},
-			expectErr:   true,
-			errContains: "no MCP configuration found",
+			validateFunc: func(t *testing.T, config *mcpclient.MCPConfig) {
+				assert.Nil(t, config)
+			},
 		},
 		"error when config file does not exist": {
 			setupEnv:   clearEnv,
@@ -1023,6 +1024,10 @@ func (f *fakeAgentRunner) RunTask(ctx context.Context, prompt string) (agent.Age
 }
 
 func (f *fakeAgentRunner) WithMcpServerInfo(_ mcpproxy.ServerManager) agent.Runner {
+	return f
+}
+
+func (f *fakeAgentRunner) WithSkillInfo(_ *agent.SkillInfo) agent.Runner {
 	return f
 }
 

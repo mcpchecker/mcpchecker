@@ -1,0 +1,8 @@
+version: 1
+sources:
+  upstream:
+    repo: github.com/org/repo
+    ref: main
+    commit: ABC123DEF456789012345678901234567890ABCD
+    hash: sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+    fetchedAt: "2025-01-15T10:30:00Z"

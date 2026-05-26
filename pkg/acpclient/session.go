@@ -11,13 +11,15 @@ import (
 
 type session struct {
 	mu               sync.Mutex
+	cwd              string // working directory for this session, used by ReadTextFile
 	updates          []acp.SessionUpdate // track all the updates in a json serializable way for future analysis
 	toolCallStatuses map[acp.ToolCallId]*acp.SessionToolCallUpdate
 	mcpServers       mcpproxy.ServerManager
 }
 
-func NewSession(mcpServers mcpproxy.ServerManager) *session {
+func NewSession(mcpServers mcpproxy.ServerManager, cwd string) *session {
 	return &session{
+		cwd:              cwd,
 		updates:          make([]acp.SessionUpdate, 0),
 		toolCallStatuses: make(map[acp.ToolCallId]*acp.SessionToolCallUpdate),
 		mcpServers:       mcpServers,

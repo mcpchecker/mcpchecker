@@ -87,7 +87,7 @@ func TestSession_IsAllowedToolCall(t *testing.T) {
 					&mockServer{name: "test-server", allowedTools: tc.allowedTools},
 				},
 			}
-			s := NewSession(mgr)
+			s := NewSession(mgr, "")
 
 			result := s.isAllowedToolCall(context.Background(), tc.call)
 			assert.Equal(t, tc.expected, result)
@@ -102,7 +102,7 @@ func TestSession_IsAllowedToolCall_WithPriorUpdate(t *testing.T) {
 			&mockServer{name: "test-server", allowedTools: []*mcp.Tool{{Name: "read_file", Title: "Read File"}}},
 		},
 	}
-	s := NewSession(mgr)
+	s := NewSession(mgr, "")
 
 	// First, store a tool call with a title
 	s.toolCallStatuses["call-1"] = &acp.SessionToolCallUpdate{
@@ -171,7 +171,7 @@ func TestSession_ToolCallStatusUpdateLocked(t *testing.T) {
 	for tn, tc := range tt {
 		t.Run(tn, func(t *testing.T) {
 			mgr := &mockServerManager{}
-			s := NewSession(mgr)
+			s := NewSession(mgr, "")
 
 			if tc.initial != nil {
 				s.toolCallStatuses[tc.initial.ToolCallId] = tc.initial
@@ -306,7 +306,7 @@ func TestSession_IsAllowedToolCall_FuzzyMatching(t *testing.T) {
 					&mockServer{name: tc.serverName, allowedTools: tc.allowedTools},
 				},
 			}
-			s := NewSession(mgr)
+			s := NewSession(mgr, "")
 
 			call := acp.ToolCallUpdate{
 				ToolCallId: "call-1",

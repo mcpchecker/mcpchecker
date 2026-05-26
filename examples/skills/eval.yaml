@@ -1,0 +1,16 @@
+kind: Eval
+apiVersion: mcpchecker/v1alpha2
+metadata:
+  name: "skills-greeting"
+config:
+  agent:
+    type: "builtin.claude-code"
+  skills:
+    sources:
+      - type: path
+        path: ./skills/
+  taskSets:
+    - glob: tasks/*/*.yaml
+      assertions:
+        skillsLoaded:
+          - skill: "greeting"

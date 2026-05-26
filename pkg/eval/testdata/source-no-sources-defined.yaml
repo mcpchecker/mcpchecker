@@ -1,0 +1,5 @@
+kind: Eval
+config:
+  taskSets:
+    - source: upstream
+      glob: "tasks/*.yaml"

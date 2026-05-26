@@ -1,0 +1,14 @@
+kind: Eval
+config:
+  sources:
+    upstream:
+      repo: github.com/org/repo-a
+      ref: main
+    other:
+      repo: github.com/org/repo-b
+      ref: v2.0.0
+  taskSets:
+    - source: upstream
+      glob: "tasks/*.yaml"
+    - source: other
+      path: tests/basic.yaml

@@ -25,3 +25,24 @@ type AcpConfig struct {
 	// This allows in-memory communication with an agent.
 	Transport Transport `json:"-"`
 }
+
+// SkillInfo provides skill mounting information for ACP agents.
+// Implemented by agent.SkillInfo to avoid import cycles.
+type SkillInfo interface {
+	GetMountPath() string
+	GetSourceDirs() []string
+}
+
+// ClientOption configures optional behavior for the ACP client.
+type ClientOption func(*clientOptions)
+
+type clientOptions struct {
+	skills SkillInfo
+}
+
+// WithSkills configures skill mounting for the ACP client.
+func WithSkills(skills SkillInfo) ClientOption {
+	return func(o *clientOptions) {
+		o.skills = skills
+	}
+}

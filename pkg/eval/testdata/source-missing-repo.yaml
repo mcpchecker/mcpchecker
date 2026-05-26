@@ -1,0 +1,5 @@
+kind: Eval
+config:
+  sources:
+    upstream:
+      ref: main

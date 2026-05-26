@@ -1709,3 +1709,54 @@ func TestNewCompositeAssertionEvaluator(t *testing.T) {
 		})
 	}
 }
+
+func TestMatchesSkillAssertion(t *testing.T) {
+	tt := map[string]struct {
+		input     string
+		assertion SkillAssertion
+		expected  bool
+	}{
+		"exact match with quoted skill name": {
+			input:     `{"skill":"greet","args":{}}`,
+			assertion: SkillAssertion{Skill: "greet"},
+			expected:  true,
+		},
+		"no match on prefix substring": {
+			input:     `{"skill":"greet_user","args":{}}`,
+			assertion: SkillAssertion{Skill: "greet"},
+			expected:  false,
+		},
+		"no match on suffix substring": {
+			input:     `{"skill":"my_greet","args":{}}`,
+			assertion: SkillAssertion{Skill: "greet"},
+			expected:  false,
+		},
+		"no match on infix substring": {
+			input:     `{"skill":"my_greet_user","args":{}}`,
+			assertion: SkillAssertion{Skill: "greet"},
+			expected:  false,
+		},
+		"pattern match works": {
+			input:     `{"skill":"greet_user","args":{}}`,
+			assertion: SkillAssertion{SkillPattern: "greet.*"},
+			expected:  true,
+		},
+		"pattern no match": {
+			input:     `{"skill":"hello","args":{}}`,
+			assertion: SkillAssertion{SkillPattern: "greet.*"},
+			expected:  false,
+		},
+		"empty assertion matches nothing": {
+			input:     `{"skill":"greet","args":{}}`,
+			assertion: SkillAssertion{},
+			expected:  false,
+		},
+	}
+
+	for tn, tc := range tt {
+		t.Run(tn, func(t *testing.T) {
+			result := matchesSkillAssertion(tc.input, tc.assertion)
+			assert.Equal(t, tc.expected, result)
+		})
+	}
+}

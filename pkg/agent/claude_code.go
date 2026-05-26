@@ -36,5 +36,9 @@ func (a *ClaudeCodeAgent) GetDefaults(model string) (*AgentSpec, error) {
 		AcpConfig: &acpclient.AcpConfig{
 			Cmd: "claude-agent-acp",
 		},
+		Skills: &AgentSkillsConfig{
+			MountPath: ".claude/skills",
+			ToolName:  "Skill",
+		},
 	}, nil
 }

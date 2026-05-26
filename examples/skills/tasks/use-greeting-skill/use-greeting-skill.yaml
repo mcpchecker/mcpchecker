@@ -1,0 +1,8 @@
+kind: Task
+apiVersion: mcpchecker/v1alpha2
+metadata:
+  name: "use-greeting-skill"
+  difficulty: easy
+spec:
+  prompt:
+    inline: Please greet Alice.

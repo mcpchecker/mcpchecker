@@ -10,15 +10,42 @@ import (
 	"text/template"
 
 	"github.com/coder/acp-go-sdk"
+	"github.com/mcpchecker/mcpchecker/pkg/acpclient"
 	"github.com/mcpchecker/mcpchecker/pkg/mcpproxy"
 	"github.com/mcpchecker/mcpchecker/pkg/tokenizer"
 	"github.com/mcpchecker/mcpchecker/pkg/tokens"
+	"github.com/mcpchecker/mcpchecker/pkg/util"
 )
 
 type Runner interface {
 	RunTask(ctx context.Context, prompt string) (AgentResult, error)
 	WithMcpServerInfo(mcpServers mcpproxy.ServerManager) Runner
+	WithSkillInfo(skills *SkillInfo) Runner
 	AgentName() string
+}
+
+// SkillInfo contains skill mounting information for the agent runner.
+// Implements acpclient.SkillInfo.
+type SkillInfo struct {
+	// MountPath is the relative path within the agent's working directory
+	// where skill files should be placed (e.g., ".claude/skills")
+	MountPath string
+
+	// SourceDirs contains absolute paths to skill source directories
+	// whose contents will be copied into the mount path
+	SourceDirs []string
+}
+
+func (s *SkillInfo) GetMountPath() string    { return s.MountPath }
+func (s *SkillInfo) GetSourceDirs() []string { return s.SourceDirs }
+
+// ClientOptions returns ACP client options for skill mounting.
+// Safe to call on a nil receiver (returns nil).
+func (s *SkillInfo) ClientOptions() []acpclient.ClientOption {
+	if s == nil {
+		return nil
+	}
+	return []acpclient.ClientOption{acpclient.WithSkills(s)}
 }
 
 type McpServerInfo interface {
@@ -339,6 +366,7 @@ type AgentResult interface {
 type agentSpecRunner struct {
 	*AgentSpec
 	mcpInfo McpServerInfo
+	skills  *SkillInfo
 }
 
 type agentSpecRunnerResult struct {
@@ -466,6 +494,13 @@ func (a *agentSpecRunner) RunTask(ctx context.Context, prompt string) (AgentResu
 			fmt.Fprintf(os.Stderr, "Preserving temporary directory %s because %s\n", tempDir, reason)
 		}
 	}()
+
+	// Mount skills into the temp directory if configured
+	if a.skills != nil {
+		if err := util.MountSkills(tempDir, a.skills.MountPath, a.skills.SourceDirs); err != nil {
+			return nil, fmt.Errorf("failed to mount skills: %w", err)
+		}
+	}
 
 	argTemplateMcpServer, err := template.New("argTemplateMcpServer").Parse(a.Commands.ArgTemplateMcpServer)
 	if err != nil {
@@ -606,6 +641,15 @@ func (a *agentSpecRunner) WithMcpServerInfo(mcpServers mcpproxy.ServerManager) R
 	return &agentSpecRunner{
 		AgentSpec: a.AgentSpec,
 		mcpInfo:   mcpServers,
+		skills:    a.skills,
+	}
+}
+
+func (a *agentSpecRunner) WithSkillInfo(skills *SkillInfo) Runner {
+	return &agentSpecRunner{
+		AgentSpec: a.AgentSpec,
+		mcpInfo:   a.mcpInfo,
+		skills:    skills,
 	}
 }
 

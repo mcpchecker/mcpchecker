@@ -146,6 +146,25 @@ func (a *acpAgent) Authenticate(_ context.Context, _ acp.AuthenticateRequest) (a
 	return acp.AuthenticateResponse{}, nil
 }
 
+func (a *acpAgent) ResumeSession(_ context.Context, _ acp.ResumeSessionRequest) (acp.ResumeSessionResponse, error) {
+	return acp.ResumeSessionResponse{}, nil
+}
+
+func (a *acpAgent) CloseSession(_ context.Context, params acp.CloseSessionRequest) (acp.CloseSessionResponse, error) {
+	a.mu.Lock()
+	s, ok := a.sessions[params.SessionId]
+	if ok {
+		delete(a.sessions, params.SessionId)
+	}
+	a.mu.Unlock()
+
+	if s != nil {
+		s.cleanup()
+	}
+
+	return acp.CloseSessionResponse{}, nil
+}
+
 func (a *acpAgent) Cancel(_ context.Context, params acp.CancelNotification) error {
 	a.mu.Lock()
 	s, ok := a.sessions[params.SessionId]

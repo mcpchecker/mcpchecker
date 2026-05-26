@@ -7,9 +7,11 @@ import (
 	"os"
 	"sync"
 
+	"github.com/genmcp/gen-mcp/pkg/template"
 	"github.com/mcpchecker/mcpchecker/pkg/extension"
 	"github.com/mcpchecker/mcpchecker/pkg/extension/protocol"
 	"github.com/mcpchecker/mcpchecker/pkg/extension/resolver"
+	"golang.org/x/sync/singleflight"
 )
 
 type ExtensionManager interface {
@@ -29,6 +31,7 @@ type extensionManager struct {
 	specs    map[string]*extension.ExtensionSpec
 	resolver resolver.Resolver
 	opts     ExtensionOptions
+	group    singleflight.Group
 }
 
 type ExtensionOptions struct {
@@ -64,46 +67,74 @@ func (m *extensionManager) Register(alias string, spec *extension.ExtensionSpec)
 }
 
 func (m *extensionManager) Get(ctx context.Context, alias string) (Client, error) {
+	// Fast path: return cached client without blocking other callers
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	if c, ok := m.clients[alias]; ok {
+		m.mu.Unlock()
 		return c, nil
 	}
-
 	spec, ok := m.specs[alias]
+	m.mu.Unlock()
+
 	if !ok {
 		return nil, fmt.Errorf("no extension registered for alias %q", alias)
 	}
 
-	binaryPath, err := m.resolver.Resolve(ctx, spec.Package)
-	if err != nil {
-		return nil, err
-	}
+	// Use singleflight so only one goroutine resolves + starts a given extension,
+	// while concurrent callers for the same alias wait and share the result.
+	// Callers requesting *different* aliases proceed concurrently.
+	// DoChan + detached context ensures the leader's deadline doesn't cancel
+	// startup for all waiters; each caller can bail on its own ctx independently.
+	ch := m.group.DoChan(alias, func() (any, error) {
+		startupCtx := context.Background()
 
-	env := os.Environ()
-	for k, v := range spec.Env {
-		env = append(env, fmt.Sprintf("%s=%s", k, v))
-	}
+		binaryPath, err := m.resolver.Resolve(startupCtx, spec.Package)
+		if err != nil {
+			return nil, err
+		}
 
-	c := New(Options{
-		BinaryPath: binaryPath,
-		LogHandler: func(level, message string, data map[string]any) {
-			if m.opts.LogHandler != nil {
-				m.opts.LogHandler(spec.Package, level, message, data)
-			}
-		},
-		Env: env,
+		env, err := expandEnv(spec.Env)
+		if err != nil {
+			return nil, err
+		}
+
+		c := New(Options{
+			BinaryPath: binaryPath,
+			LogHandler: func(level, message string, data map[string]any) {
+				if m.opts.LogHandler != nil {
+					m.opts.LogHandler(spec.Package, level, message, data)
+				}
+			},
+			Env: env,
+		})
+
+		expandedConfig, err := expandConfig(spec.Config)
+		if err != nil {
+			return nil, err
+		}
+
+		if err := c.Start(startupCtx, &protocol.InitializeParams{
+			Config: expandedConfig,
+		}); err != nil {
+			return nil, err
+		}
+
+		m.mu.Lock()
+		m.clients[alias] = c
+		m.mu.Unlock()
+
+		return c, nil
 	})
 
-	if err := c.Start(ctx, &protocol.InitializeParams{
-		Config: spec.Config,
-	}); err != nil {
-		return nil, err
+	select {
+	case res := <-ch:
+		if res.Err != nil {
+			return nil, res.Err
+		}
+		return res.Val.(Client), nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
-
-	m.clients[alias] = c
-	return c, nil
 }
 
 func (m *extensionManager) Has(alias string) bool {
@@ -139,4 +170,105 @@ func ManagerToContext(ctx context.Context, manager ExtensionManager) context.Con
 func ManagerFromContext(ctx context.Context) (ExtensionManager, bool) {
 	manager, ok := ctx.Value(managerKey{}).(ExtensionManager)
 	return manager, ok
+}
+
+// expandEnv resolves template references in the given env map and returns
+// the result merged with the current OS environment as KEY=VALUE pairs.
+func expandEnv(envMap map[string]string) ([]string, error) {
+	env := os.Environ()
+	for k, v := range envMap {
+		result, err := expandTemplate(v)
+		if err != nil {
+			return nil, err
+		}
+		str, ok := result.(string)
+		if !ok {
+			return nil, fmt.Errorf("env template resolved to non-string type: %T", result)
+		}
+		env = append(env, fmt.Sprintf("%s=%s", k, str))
+	}
+	return env, nil
+}
+
+// expandConfig returns a deep copy of config with all string values resolved
+// through template expansion, iterating nested maps and slices.
+func expandConfig(config map[string]any) (map[string]any, error) {
+	if config == nil {
+		return nil, nil
+	}
+
+	expanded := make(map[string]any, len(config))
+	for k, v := range config {
+		expanded[k] = v
+	}
+
+	stack := []any{expanded}
+	for len(stack) > 0 {
+		current := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+
+		switch c := current.(type) {
+		case map[string]any:
+			for k, v := range c {
+				switch t := v.(type) {
+				case string:
+					result, err := expandTemplate(t)
+					if err != nil {
+						return nil, err
+					}
+					c[k] = result
+				case map[string]any:
+					clone := make(map[string]any, len(t))
+					for ck, cv := range t {
+						clone[ck] = cv
+					}
+					c[k] = clone
+					stack = append(stack, clone)
+				case []any:
+					clone := make([]any, len(t))
+					copy(clone, t)
+					c[k] = clone
+					stack = append(stack, clone)
+				}
+			}
+		case []any:
+			for i, v := range c {
+				switch t := v.(type) {
+				case string:
+					result, err := expandTemplate(t)
+					if err != nil {
+						return nil, err
+					}
+					c[i] = result
+				case map[string]any:
+					clone := make(map[string]any, len(t))
+					for ck, cv := range t {
+						clone[ck] = cv
+					}
+					c[i] = clone
+					stack = append(stack, clone)
+				case []any:
+					clone := make([]any, len(t))
+					copy(clone, t)
+					c[i] = clone
+					stack = append(stack, clone)
+				}
+			}
+		}
+	}
+
+	return expanded, nil
+}
+
+// expandTemplate parses and resolves a template string, returning the expanded value.
+func expandTemplate(s string) (any, error) {
+	parsed, err := template.ParseTemplate(s, template.TemplateParserOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse template: %w", err)
+	}
+	builder, err := template.NewTemplateBuilder(parsed, false)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create template builder: %w", err)
+	}
+	return builder.GetResult()
 }

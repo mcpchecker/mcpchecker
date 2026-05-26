@@ -1,0 +1,9 @@
+kind: Eval
+config:
+  sources:
+    upstream:
+      repo: github.com/org/repo
+      ref: main
+  taskSets:
+    - source: upstream
+      glob: ../../../*.yaml

@@ -16,6 +16,7 @@ import (
 type llmACPRunner struct {
 	model      string
 	mcpServers mcpproxy.ServerManager
+	skills     *SkillInfo
 }
 
 var _ Runner = &llmACPRunner{}
@@ -40,6 +41,15 @@ func (r *llmACPRunner) WithMcpServerInfo(mcpServers mcpproxy.ServerManager) Runn
 	return &llmACPRunner{
 		model:      r.model,
 		mcpServers: mcpServers,
+		skills:     r.skills,
+	}
+}
+
+func (r *llmACPRunner) WithSkillInfo(skills *SkillInfo) Runner {
+	return &llmACPRunner{
+		model:      r.model,
+		mcpServers: r.mcpServers,
+		skills:     skills,
 	}
 }
 
@@ -53,7 +63,7 @@ func (r *llmACPRunner) RunTask(ctx context.Context, prompt string) (AgentResult,
 
 	client := acpclient.NewClient(ctx, &acpclient.AcpConfig{
 		Transport: transport,
-	})
+	}, r.skills.ClientOptions()...)
 
 	if err := client.Start(ctx); err != nil {
 		return nil, fmt.Errorf("failed to start ACP client: %w", err)
