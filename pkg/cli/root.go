@@ -16,6 +16,7 @@ It runs agents through defined tasks and validates their behavior using assertio
 
 	// Add subcommands
 	rootCmd.AddCommand(NewEvalCmd())
+	rootCmd.AddCommand(NewInstallCmd())
 	rootCmd.AddCommand(NewResultCmd())
 	rootCmd.AddCommand(NewVersionCmd())
 
