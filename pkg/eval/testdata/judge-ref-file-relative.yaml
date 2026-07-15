@@ -1,0 +1,8 @@
+kind: Eval
+config:
+  llmJudge:
+    ref:
+      type: file
+      path: agents/judge.yaml
+  taskSets:
+    - path: tasks/test.yaml
