@@ -188,11 +188,16 @@ func Read(data []byte, basePath string) (*EvalSpec, error) {
 
 	// Convert all relative file paths to absolute paths
 	if spec.Config.Agent != nil && spec.Config.Agent.Type == "file" {
-		if err := resolveFilePath(&spec.Config.Agent.Path, basePath); err != nil {
+		if err := util.ResolveRelativePath(&spec.Config.Agent.Path, basePath); err != nil {
 			return nil, fmt.Errorf("failed to resolve agent file path: %w", err)
 		}
 	}
-	if err := resolveFilePath(&spec.Config.McpConfigFile, basePath); err != nil {
+	if spec.Config.LLMJudge != nil && spec.Config.LLMJudge.AgentRef != nil && spec.Config.LLMJudge.AgentRef.Type == "file" {
+		if err := util.ResolveRelativePath(&spec.Config.LLMJudge.AgentRef.Path, basePath); err != nil {
+			return nil, fmt.Errorf("failed to resolve llm judge agent ref file path: %w", err)
+		}
+	}
+	if err := util.ResolveRelativePath(&spec.Config.McpConfigFile, basePath); err != nil {
 		return nil, fmt.Errorf("failed to resolve mcp config file path: %w", err)
 	}
 
@@ -216,7 +221,7 @@ func Read(data []byte, basePath string) (*EvalSpec, error) {
 			if src.Path == "" {
 				return nil, fmt.Errorf("skills.sources[%d]: path is required for type \"path\"", i)
 			}
-			if err := resolveFilePath(&src.Path, basePath); err != nil {
+			if err := util.ResolveRelativePath(&src.Path, basePath); err != nil {
 				return nil, fmt.Errorf("failed to resolve skill source path at index %d: %w", i, err)
 			}
 		}
@@ -230,11 +235,11 @@ func Read(data []byte, basePath string) (*EvalSpec, error) {
 				return nil, fmt.Errorf("taskSet[%d]: %w", i, err)
 			}
 		} else if ts.Path != "" {
-			if err := resolveFilePath(&ts.Path, basePath); err != nil {
+			if err := util.ResolveRelativePath(&ts.Path, basePath); err != nil {
 				return nil, fmt.Errorf("failed to resolve task set path at index %d: %w", i, err)
 			}
 		} else if ts.Glob != "" {
-			if err := resolveFilePath(&ts.Glob, basePath); err != nil {
+			if err := util.ResolveRelativePath(&ts.Glob, basePath); err != nil {
 				return nil, fmt.Errorf("failed to resolve task set glob at index %d: %w", i, err)
 			}
 		}
@@ -302,23 +307,6 @@ func validateNoPathEscape(p string) error {
 	if cleaned == ".." || strings.HasPrefix(cleaned, "../") {
 		return fmt.Errorf("path %q escapes the repo root", p)
 	}
-
-	return nil
-}
-
-func resolveFilePath(filePath *string, basePath string) error {
-	if filePath == nil || *filePath == "" {
-		return nil
-	}
-
-	// If the path is already absolute, leave it as-is
-	if filepath.IsAbs(*filePath) {
-		return nil
-	}
-
-	// Convert relative path to absolute path based on the YAML file's directory
-	absPath := filepath.Join(basePath, *filePath)
-	*filePath = absPath
 
 	return nil
 }

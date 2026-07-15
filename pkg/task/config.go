@@ -125,14 +125,18 @@ func Read(data []byte, basePath string) (*TaskConfig, error) {
 			return nil, fmt.Errorf("v1alpha1 requires steps field")
 		}
 
-		if err := resolveStepPath(s.SetupScript, basePath); err != nil {
-			return nil, fmt.Errorf("failed to resolve setup script path: %w", err)
+		if s.SetupScript != nil {
+			if err := util.ResolveRelativePath(&s.SetupScript.File, basePath); err != nil {
+				return nil, fmt.Errorf("failed to resolve setup script path: %w", err)
+			}
 		}
-		if err := resolveStepPath(s.CleanupScript, basePath); err != nil {
-			return nil, fmt.Errorf("failed to resolve cleanup script path: %w", err)
+		if s.CleanupScript != nil {
+			if err := util.ResolveRelativePath(&s.CleanupScript.File, basePath); err != nil {
+				return nil, fmt.Errorf("failed to resolve cleanup script path: %w", err)
+			}
 		}
-		if !s.VerifyScript.IsEmpty() {
-			if err := resolveStepPath(s.VerifyScript.Step, basePath); err != nil {
+		if !s.VerifyScript.IsEmpty() && s.VerifyScript.Step != nil {
+			if err := util.ResolveRelativePath(&s.VerifyScript.Step.File, basePath); err != nil {
 				return nil, fmt.Errorf("failed to resolve verify script path: %w", err)
 			}
 		}
@@ -142,28 +146,13 @@ func Read(data []byte, basePath string) (*TaskConfig, error) {
 		}
 	}
 
-	if err := resolveStepPath(spec.Spec.Prompt, basePath); err != nil {
-		return nil, fmt.Errorf("failed to resolve prompt path: %w", err)
+	if spec.Spec.Prompt != nil {
+		if err := util.ResolveRelativePath(&spec.Spec.Prompt.File, basePath); err != nil {
+			return nil, fmt.Errorf("failed to resolve prompt path: %w", err)
+		}
 	}
 
 	return spec, nil
-}
-
-func resolveStepPath(step *util.Step, basePath string) error {
-	if step == nil || step.File == "" {
-		return nil
-	}
-
-	// If the path is already absolute, leave it as-is
-	if filepath.IsAbs(step.File) {
-		return nil
-	}
-
-	// Convert relative path to absolute path based on the YAML file's directory
-	absPath := filepath.Join(basePath, step.File)
-	step.File = absPath
-
-	return nil
 }
 
 func FromFile(path string) (*TaskConfig, error) {

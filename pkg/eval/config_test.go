@@ -14,6 +14,23 @@ const (
 	testDataPath = "testdata"
 )
 
+func TestReadJudgeRefPathResolution(t *testing.T) {
+	basePath, err := os.Getwd()
+	require.NoError(t, err)
+	basePath = filepath.Join(basePath, testDataPath)
+
+	data, err := os.ReadFile(filepath.Join(basePath, "judge-ref-file-relative.yaml"))
+	require.NoError(t, err)
+
+	spec, err := Read(data, basePath)
+	require.NoError(t, err)
+
+	require.NotNil(t, spec.Config.LLMJudge)
+	require.NotNil(t, spec.Config.LLMJudge.AgentRef)
+	assert.True(t, filepath.IsAbs(spec.Config.LLMJudge.AgentRef.Path), "judge ref path should be absolute, got %q", spec.Config.LLMJudge.AgentRef.Path)
+	assert.Equal(t, filepath.Join(basePath, "agents/judge.yaml"), spec.Config.LLMJudge.AgentRef.Path)
+}
+
 func TestReadSourceSpec(t *testing.T) {
 	basePath, err := os.Getwd()
 	require.NoError(t, err)
