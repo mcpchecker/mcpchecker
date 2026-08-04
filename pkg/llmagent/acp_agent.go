@@ -192,6 +192,10 @@ func (a *acpAgent) SetSessionConfigOption(_ context.Context, _ acp.SetSessionCon
 	return acp.SetSessionConfigOptionResponse{}, nil
 }
 
+func (a *acpAgent) Logout(_ context.Context, _ acp.LogoutRequest) (acp.LogoutResponse, error) {
+	return acp.LogoutResponse{}, nil
+}
+
 func (a *acpAgent) Prompt(ctx context.Context, params acp.PromptRequest) (acp.PromptResponse, error) {
 	a.mu.Lock()
 	s, ok := a.sessions[params.SessionId]
