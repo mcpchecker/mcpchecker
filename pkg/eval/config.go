@@ -41,11 +41,11 @@ type EvalConfig struct {
 	// Agent configuration
 	Agent *agent.AgentRef `json:"agent"`
 
+	// Sources are external task repositories
+	Sources map[string]*SourceSpec `json:"sources,omitempty"`
+
 	// Extensions configuration
 	Extensions map[string]*extension.ExtensionSpec `json:"extensions"`
-
-	// Sources defines cross-repo eval sources keyed by name
-	Sources map[string]*SourceSpec `json:"sources,omitempty"`
 
 	// MCP configuration
 	McpConfigFile string                       `json:"mcpConfigFile"`
@@ -77,27 +77,26 @@ type SkillSource struct {
 	Path string `json:"path,omitempty"`
 }
 
-// SourceSpec defines a cross-repo eval source
-type SourceSpec struct {
-	Repo          string            `json:"repo"`
-	Ref           string            `json:"ref"`
-	ServerMapping map[string]string `json:"serverMapping,omitempty"`
-}
-
 type TaskSet struct {
+	// Source references a named source from config.sources.
+	// When set, Glob/Path are resolved relative to the fetched source directory.
+	Source string `json:"source,omitempty"`
+
 	// Exactly one of Glob or Path must be set
 	Glob string `json:"glob,omitempty"`
 	Path string `json:"path,omitempty"`
 
-	// Source references a key in EvalConfig.Sources.
-	// Mutually exclusive with absolute local paths.
-	Source string `json:"source,omitempty"`
 
 	// Optional label selector - filters tasks by labels
 	// All specified labels must match (AND logic)
 	LabelSelector map[string]string `json:"labelSelector,omitempty"`
 
 	Assertions *TaskAssertions `json:"assertions,omitempty"`
+
+	// ServerMapping rewrites task requires.mcpServer names when loading tasks
+	// from this set. Populated automatically during source expansion; not set
+	// directly in eval.yaml.
+	ServerMapping map[string]string `json:"serverMapping,omitempty"`
 }
 
 // TODO: add a custom Verify script for another form of assertion

@@ -16,6 +16,7 @@ It runs agents through defined tasks and validates their behavior using assertio
 ### SEE ALSO
 
 * [mcpchecker check](mcpchecker_check.md)	 - Run an evaluation
+* [mcpchecker install](mcpchecker_install.md)	 - Fetch dependencies and write lockfile
 * [mcpchecker result](mcpchecker_result.md)	 - Commands for inspecting and analyzing evaluation result files
 * [mcpchecker version](mcpchecker_version.md)	 - Print version information
 
