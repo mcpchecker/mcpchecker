@@ -19,6 +19,7 @@ mcpchecker check [eval-config-file] [flags]
   -h, --help                             help for check
   -l, --label-selector string            Filter taskSets by labels (e.g., suite=k8s,suite=helm for OR; suite=k8s,difficulty=easy for AND)
       --mcp-config-file string           Path to MCP config file (overrides value in eval config)
+      --no-lock                          Skip lockfile validation; resolve and fetch sources on the fly without writing a lockfile
   -o, --output string                    Output format (text, json) (default "text")
   -p, --parallel int                     Number of parallel workers for tasks marked as parallel (1 = sequential) (default 1)
   -r, --run string                       Regular expression to match task names to run (unanchored, like go test -run)

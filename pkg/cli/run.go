@@ -12,6 +12,7 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/mcpchecker/mcpchecker/pkg/eval"
+	"github.com/mcpchecker/mcpchecker/pkg/source"
 	"github.com/mcpchecker/mcpchecker/pkg/util"
 	"github.com/spf13/cobra"
 )
@@ -29,6 +30,7 @@ func NewEvalCmd() *cobra.Command {
 	var taskTimeout string
 	var defaultCleanupTimeout string
 	var cleanupTimeout string
+	var noLock bool
 
 	cmd := &cobra.Command{
 		Use:   "check [eval-config-file]",
@@ -40,9 +42,18 @@ func NewEvalCmd() *cobra.Command {
 			configFile := args[0]
 
 			// Load eval spec
-			spec, err := eval.FromFile(configFile)
+			absConfigFile, err := filepath.Abs(configFile)
+			if err != nil {
+				return fmt.Errorf("failed to resolve config file path: %w", err)
+			}
+			spec, err := eval.FromFile(absConfigFile)
 			if err != nil {
 				return fmt.Errorf("failed to load eval config: %w", err)
+			}
+
+			// Resolve external sources and expand source: tasksets.
+			if err := resolveSourcesForCheck(cmd.Context(), spec, absConfigFile, noLock); err != nil {
+				return err
 			}
 
 			overrideFile := func(specFile *string, fileName string) error {
@@ -133,8 +144,143 @@ func NewEvalCmd() *cobra.Command {
 	cmd.Flags().StringVar(&taskTimeout, "task-timeout", "", "Hard override timeout for ALL tasks (e.g., '15m', '1h')")
 	cmd.Flags().StringVar(&defaultCleanupTimeout, "default-cleanup-timeout", "", "Default cleanup timeout for tasks without their own (e.g., '2m')")
 	cmd.Flags().StringVar(&cleanupTimeout, "cleanup-timeout", "", "Hard override cleanup timeout for ALL tasks (e.g., '2m')")
+	cmd.Flags().BoolVar(&noLock, "no-lock", false, "Skip lockfile verification (prints a warning)")
 
 	return cmd
+}
+
+// resolveSourcesForCheck validates the lockfile state and expands source: tasksets
+// to local file paths before the runner loads tasks.
+//
+// State machine (mirrors spec):
+//   - No lockfile + no sources/source-tasksets → no-op (works as today)
+//   - No lockfile + has sources              → auto-resolve, create lockfile, continue
+//   - Lockfile matches eval.yaml             → verify hashes, ensure cache
+//   - Lockfile stale (ref changed)           → error: run mcpchecker install --update
+//   - --no-lock                              → skip all of the above (print warning)
+func resolveSourcesForCheck(ctx context.Context, spec *eval.EvalSpec, absConfigFile string, noLock bool) error {
+	// Collect which sources are actually referenced.
+	hasSourced := len(spec.Config.Sources) > 0
+	for _, ts := range spec.Config.TaskSets {
+		if ts.Source != "" {
+			hasSourced = true
+			break
+		}
+	}
+	if !hasSourced {
+		return nil
+	}
+
+	if noLock {
+		fmt.Fprintf(os.Stderr, "warning: --no-lock set, skipping lockfile verification for external sources\n")
+		return nil
+	}
+
+	lockPath := eval.LockFilePathFromDir(spec.BasePath())
+	lock, err := eval.ReadLockFile(lockPath)
+	if err != nil {
+		return fmt.Errorf("failed to read lockfile: %w", err)
+	}
+
+	fetcher := &source.GitHubFetcher{}
+	needsWrite := false
+
+	for name, src := range spec.Config.Sources {
+		locked, ok := lock.Sources[name]
+		if !ok {
+			// Auto-resolve: no lockfile entry yet.
+			fmt.Fprintf(os.Stderr, "source %q: not in lockfile, resolving ...\n", name)
+			commit, err := fetcher.ResolveRef(ctx, src.Repo, src.Ref)
+			if err != nil {
+				return fmt.Errorf("source %q: failed to resolve ref %q: %w\nRun: mcpchecker install", name, src.Ref, err)
+			}
+			cacheDir, err := source.SourceCacheDir(src.Repo, commit)
+			if err != nil {
+				return err
+			}
+			hash := ""
+			if !source.DirExists(cacheDir) {
+				fmt.Fprintf(os.Stderr, "source %q: fetching ...\n", name)
+				hash, err = fetcher.Fetch(ctx, src.Repo, commit, cacheDir)
+				if err != nil {
+					return fmt.Errorf("source %q: failed to fetch: %w", name, err)
+				}
+				source.WriteHash(cacheDir, hash)
+			}
+			if lock.Sources == nil {
+				lock.Sources = make(map[string]*eval.LockedSource)
+			}
+			lock.Sources[name] = &eval.LockedSource{
+				Repo:   src.Repo,
+				Ref:    src.Ref,
+				Commit: commit,
+				Hash:   hash,
+			}
+			needsWrite = true
+			continue
+		}
+
+		// Check for stale lockfile (ref changed in eval.yaml).
+		if src.Ref != locked.Ref {
+			return fmt.Errorf("source %q: ref changed from %q to %q in eval.yaml\nRun: mcpchecker install --update", name, locked.Ref, src.Ref)
+		}
+
+		// Ensure cache is present; re-fetch if missing.
+		cacheDir, err := source.SourceCacheDir(src.Repo, locked.Commit)
+		if err != nil {
+			return err
+		}
+		if !source.DirExists(cacheDir) {
+			fmt.Fprintf(os.Stderr, "source %q: re-fetching (cache missing) ...\n", name)
+			hash, err := fetcher.Fetch(ctx, src.Repo, locked.Commit, cacheDir)
+			if err != nil {
+				return fmt.Errorf("source %q: failed to re-fetch: %w", name, err)
+			}
+			if locked.Hash != "" && hash != locked.Hash {
+				return fmt.Errorf("source %q: content hash mismatch after re-fetch (lockfile: %s, got: %s)", name, locked.Hash, hash)
+			}
+			source.WriteHash(cacheDir, hash)
+		} else if locked.Hash != "" {
+			if err := source.VerifyHash(cacheDir, locked.Hash); err != nil {
+				return fmt.Errorf("source %q: %w", name, err)
+			}
+		}
+	}
+
+	if needsWrite {
+		if err := eval.WriteLockFile(lockPath, lock); err != nil {
+			return fmt.Errorf("failed to write lockfile: %w", err)
+		}
+	}
+
+	// Expand source: tasksets into local glob/path tasksets.
+	for i := range spec.Config.TaskSets {
+		ts := &spec.Config.TaskSets[i]
+		if ts.Source == "" {
+			continue
+		}
+		src, ok := spec.Config.Sources[ts.Source]
+		if !ok {
+			return fmt.Errorf("taskSet references unknown source %q", ts.Source)
+		}
+		locked := lock.Sources[ts.Source]
+		if locked == nil {
+			return fmt.Errorf("source %q not in lockfile after resolution", ts.Source)
+		}
+		cacheDir, err := source.SourceCacheDir(src.Repo, locked.Commit)
+		if err != nil {
+			return err
+		}
+		if ts.Glob != "" {
+			ts.Glob = filepath.Join(cacheDir, ts.Glob)
+		} else if ts.Path != "" {
+			ts.Path = filepath.Join(cacheDir, ts.Path)
+		}
+		ts.ServerMapping = src.ServerMapping
+		ts.Source = "" // mark as expanded
+	}
+
+	return nil
 }
 
 // progressDisplay handles interactive progress display
