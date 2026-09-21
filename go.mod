@@ -3,13 +3,13 @@ module github.com/mcpchecker/mcpchecker
 go 1.27.0
 
 require (
-	charm.land/fantasy v0.43.1
+	charm.land/fantasy v0.43.2
 	github.com/coder/acp-go-sdk v0.13.5
 	github.com/fatih/color v1.19.0
 	github.com/genmcp/gen-mcp v0.2.3
 	github.com/google/jsonschema-go v0.4.3
 	github.com/google/uuid v1.6.0
-	github.com/modelcontextprotocol/go-sdk v1.7.0
+	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/pkoukk/tiktoken-go v0.1.8
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.12.1
