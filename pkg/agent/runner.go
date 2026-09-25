@@ -288,13 +288,13 @@ func FinalMessageFromSteps(steps []OutputStep) string {
 
 // turnBuilder accumulates session update data and produces per-turn token counts.
 type turnBuilder struct {
-	tok            tokenizer.Tokenizer
-	thinking       strings.Builder
-	message        strings.Builder
-	numToolCalls   int
-	started        bool
-	seenResults    bool
-	turns          []tokens.TurnTokens
+	tok          tokenizer.Tokenizer
+	thinking     strings.Builder
+	message      strings.Builder
+	numToolCalls int
+	started      bool
+	seenResults  bool
+	turns        []tokens.TurnTokens
 }
 
 func newTurnBuilder() *turnBuilder {
@@ -420,7 +420,7 @@ func NewRunnerForSpec(spec *AgentSpec) (Runner, error) {
 			}
 
 			migrateLegacyEnvVars(spec.Builtin)
-			return NewLLMACPRunner(model)
+			return NewLLMACPRunner(model, spec.Builtin.UseResponsesAPI)
 		}
 	}
 

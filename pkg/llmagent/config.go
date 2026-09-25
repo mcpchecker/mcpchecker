@@ -13,6 +13,10 @@ type Config struct {
 
 	// SystemPrompt contains optional system instructions for the agent
 	SystemPrompt string
+
+	// UseResponsesAPI explicitly selects the OpenAI Responses API when set.
+	// When unset, models known to require Responses are selected automatically.
+	UseResponsesAPI *bool
 }
 
 func (cfg *Config) ParseModel() (provider, modelID string, err error) {

@@ -3,6 +3,7 @@ package llmagent
 import (
 	"fmt"
 	"os"
+	"slices"
 	"sort"
 
 	"charm.land/fantasy"
@@ -29,6 +30,13 @@ const (
 	openaiBaseUrlEnvVar       = "OPENAI_BASE_URL"
 )
 
+var responsesAPIModels = []string{
+	"gpt-5.6",
+	"gpt-5.6-sol",
+	"gpt-5.6-terra",
+	"gpt-5.6-luna",
+}
+
 func ResolveProvider(providerName string) (fantasy.Provider, error) {
 	def, ok := providerBuilders[providerName]
 	if !ok {
@@ -42,6 +50,14 @@ func ResolveProvider(providerName string) (fantasy.Provider, error) {
 	}
 
 	return def.Build()
+}
+
+func resolveProvider(providerName string, useResponsesAPI *bool) (fantasy.Provider, error) {
+	if providerName == openaiProviderKey {
+		return (&openaiProviderBuilder{}).build(useResponsesAPI)
+	}
+
+	return ResolveProvider(providerName)
 }
 
 // providerBuilder knows how to create a fantasy.Provider from env vars
@@ -152,6 +168,10 @@ func (p *googleProviderBuilder) Build() (fantasy.Provider, error) {
 type openaiProviderBuilder struct{}
 
 func (p *openaiProviderBuilder) Build() (fantasy.Provider, error) {
+	return p.build(nil)
+}
+
+func (p *openaiProviderBuilder) build(useResponsesAPI *bool) (fantasy.Provider, error) {
 	opts := []openai.Option{}
 
 	key := os.Getenv(openaiApiKeyEnvVar)
@@ -164,5 +184,19 @@ func (p *openaiProviderBuilder) Build() (fantasy.Provider, error) {
 		opts = append(opts, openai.WithBaseURL(baseUrl))
 	}
 
+	opts = append(opts,
+		openai.WithUseResponsesAPI(),
+		openai.WithResponsesAPIFunc(func(modelID string) bool {
+			return shouldUseResponsesAPI(modelID, useResponsesAPI)
+		}),
+	)
+
 	return openai.New(opts...)
+}
+
+func shouldUseResponsesAPI(modelID string, configured *bool) bool {
+	if configured != nil {
+		return *configured
+	}
+	return slices.Contains(responsesAPIModels, modelID)
 }

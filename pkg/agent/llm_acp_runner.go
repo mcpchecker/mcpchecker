@@ -14,22 +14,24 @@ import (
 )
 
 type llmACPRunner struct {
-	model      string
-	mcpServers mcpproxy.ServerManager
-	skills     *SkillInfo
+	model           string
+	useResponsesAPI *bool
+	mcpServers      mcpproxy.ServerManager
+	skills          *SkillInfo
 }
 
 var _ Runner = &llmACPRunner{}
 
 // NewLLMACPRunner creates a runner that uses the llmagent package with ACP protocol.
 // The model string is in "provider:model-id" format (e.g. "openai:gpt-4o").
-func NewLLMACPRunner(model string) (Runner, error) {
+func NewLLMACPRunner(model string, useResponsesAPI *bool) (Runner, error) {
 	if model == "" {
 		return nil, fmt.Errorf("model is required for llm-agent")
 	}
 
 	return &llmACPRunner{
-		model: model,
+		model:           model,
+		useResponsesAPI: useResponsesAPI,
 	}, nil
 }
 
@@ -39,22 +41,27 @@ func (r *llmACPRunner) AgentName() string {
 
 func (r *llmACPRunner) WithMcpServerInfo(mcpServers mcpproxy.ServerManager) Runner {
 	return &llmACPRunner{
-		model:      r.model,
-		mcpServers: mcpServers,
-		skills:     r.skills,
+		model:           r.model,
+		useResponsesAPI: r.useResponsesAPI,
+		mcpServers:      mcpServers,
+		skills:          r.skills,
 	}
 }
 
 func (r *llmACPRunner) WithSkillInfo(skills *SkillInfo) Runner {
 	return &llmACPRunner{
-		model:      r.model,
-		mcpServers: r.mcpServers,
-		skills:     skills,
+		model:           r.model,
+		useResponsesAPI: r.useResponsesAPI,
+		mcpServers:      r.mcpServers,
+		skills:          skills,
 	}
 }
 
 func (r *llmACPRunner) RunTask(ctx context.Context, prompt string) (AgentResult, error) {
-	agent, err := llmagent.New(ctx, llmagent.Config{Model: r.model})
+	agent, err := llmagent.New(ctx, llmagent.Config{
+		Model:           r.model,
+		UseResponsesAPI: r.useResponsesAPI,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create LLM agent: %w", err)
 	}

@@ -45,7 +45,7 @@ func New(ctx context.Context, cfg Config) (AcpAgent, error) {
 		return nil, err
 	}
 
-	provider, err := ResolveProvider(providerName)
+	provider, err := resolveProvider(providerName, cfg.UseResponsesAPI)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create provider %q: %w", providerName, err)
 	}

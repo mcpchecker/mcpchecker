@@ -281,3 +281,52 @@ func TestOpenAIProviderBuilder(t *testing.T) {
 		})
 	}
 }
+
+func TestShouldUseResponsesAPI(t *testing.T) {
+	tests := map[string]struct {
+		model      string
+		configured *bool
+		expected   bool
+	}{
+		"listed alias defaults to responses": {
+			model:    "gpt-5.6",
+			expected: true,
+		},
+		"listed sol defaults to responses": {
+			model:    "gpt-5.6-sol",
+			expected: true,
+		},
+		"listed terra defaults to responses": {
+			model:    "gpt-5.6-terra",
+			expected: true,
+		},
+		"listed luna defaults to responses": {
+			model:    "gpt-5.6-luna",
+			expected: true,
+		},
+		"unlisted model defaults to chat completions": {
+			model:    "gpt-5.5",
+			expected: false,
+		},
+		"similar model is not implicitly included": {
+			model:    "gpt-5.6-custom",
+			expected: false,
+		},
+		"explicit enable overrides unlisted model": {
+			model:      "gpt-4o",
+			configured: new(true),
+			expected:   true,
+		},
+		"explicit disable overrides listed model": {
+			model:      "gpt-5.6-luna",
+			configured: new(false),
+			expected:   false,
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, tc.expected, shouldUseResponsesAPI(tc.model, tc.configured))
+		})
+	}
+}

@@ -14,34 +14,25 @@ func ResolveAgentRef(ref *AgentRef) (*AgentSpec, error) {
 		return nil, fmt.Errorf("agent ref must not be nil")
 	}
 
+	var agentSpec *AgentSpec
+	var err error
 	if ref.Type == "file" {
 		if ref.Path == "" {
 			return nil, fmt.Errorf("path must be specified when agent type is 'file'")
 		}
-		return LoadWithBuiltins(ref.Path)
-	}
-
-	if !strings.HasPrefix(ref.Type, builtinPrefix) {
+		agentSpec, err = LoadWithBuiltins(ref.Path)
+	} else if builtinType, isBuiltin := strings.CutPrefix(ref.Type, builtinPrefix); isBuiltin {
+		agentSpec, err = loadBuiltin(builtinType, ref.Model)
+	} else {
 		return nil, fmt.Errorf("agent type must be either 'file' or 'builtin.X' format, got: %q", ref.Type)
 	}
 
-	builtinType := strings.TrimPrefix(ref.Type, builtinPrefix)
-	builtinAgent, ok := GetBuiltinType(builtinType)
-	if !ok {
-		return nil, fmt.Errorf("unknown builtin agent type: %q", builtinType)
-	}
-
-	if builtinAgent.RequiresModel() && ref.Model == "" {
-		return nil, fmt.Errorf("builtin type %q requires a model to be specified", builtinType)
-	}
-
-	if err := builtinAgent.ValidateEnvironment(); err != nil {
-		return nil, fmt.Errorf("builtin type %q environment validation failed: %w", builtinType, err)
-	}
-
-	agentSpec, err := builtinAgent.GetDefaults(ref.Model)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get defaults for builtin agent %q: %w", builtinType, err)
+		return nil, err
+	}
+
+	if agentSpec.Builtin != nil && ref.UseResponsesAPI != nil {
+		agentSpec.Builtin.UseResponsesAPI = ref.UseResponsesAPI
 	}
 
 	return agentSpec, nil

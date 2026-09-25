@@ -47,6 +47,10 @@ type AgentRef struct {
 
 	// Model in "provider:model-id" format (required for builtin.llm-agent)
 	Model string `json:"model,omitempty"`
+
+	// UseResponsesAPI explicitly enables or disables the OpenAI Responses API.
+	// When omitted, models known to require Responses are selected automatically.
+	UseResponsesAPI *bool `json:"useResponsesAPI,omitempty"`
 }
 
 // BuiltinRef references a built-in agent type with optional model
@@ -57,6 +61,9 @@ type BuiltinRef struct {
 	// Model is the model to use in "provider:model-id" format (e.g. "openai:gpt-4o").
 	// Required for "llm-agent" type.
 	Model string `json:"model,omitempty"`
+
+	// UseResponsesAPI explicitly enables or disables the OpenAI Responses API.
+	UseResponsesAPI *bool `json:"useResponsesAPI,omitempty"`
 
 	// BaseURL is the API base URL (deprecated: used for backwards compat with openai-agent/openai-acp configs)
 	BaseURL string `json:"baseUrl,omitempty"`

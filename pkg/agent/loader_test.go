@@ -164,6 +164,21 @@ func TestNewRunnerForSpec(t *testing.T) {
 				assert.True(t, ok, "expected runner to be *agentSpecRunner")
 			},
 		},
+		"llm builtin passes responses api setting to runner": {
+			spec: &AgentSpec{
+				Builtin: &BuiltinRef{
+					Type:            "llm-agent",
+					Model:           "openai:gpt-5.6-luna",
+					UseResponsesAPI: new(false),
+				},
+			},
+			validate: func(t *testing.T, runner Runner) {
+				llmRunner, ok := runner.(*llmACPRunner)
+				require.True(t, ok)
+				require.NotNil(t, llmRunner.useResponsesAPI)
+				assert.False(t, *llmRunner.useResponsesAPI)
+			},
+		},
 	}
 
 	for tn, tc := range tt {
@@ -244,5 +259,19 @@ func TestMergeAgentSpecs(t *testing.T) {
 		assert.Equal(t, "override", result.Metadata.Name)
 		assert.Equal(t, "{{ .File }}", result.Commands.ArgTemplateMcpServer)
 		assert.Equal(t, "base command", result.Commands.RunPrompt)
+	})
+
+	t.Run("override responses api selection", func(t *testing.T) {
+		base := &AgentSpec{Builtin: &BuiltinRef{
+			Type:            "llm-agent",
+			Model:           "openai:gpt-5.6-luna",
+			UseResponsesAPI: new(true),
+		}}
+		override := &AgentSpec{Builtin: &BuiltinRef{UseResponsesAPI: new(false)}}
+
+		result := mergeAgentSpecs(base, override)
+
+		require.NotNil(t, result.Builtin.UseResponsesAPI)
+		assert.False(t, *result.Builtin.UseResponsesAPI)
 	})
 }

@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/mcpchecker/mcpchecker/pkg/acpclient"
@@ -117,6 +119,59 @@ func TestLLMAgent(t *testing.T) {
 		assert.Equal(t, "llm-agent", spec.Builtin.Type)
 		assert.Equal(t, "openai:gpt-4", spec.Builtin.Model)
 	})
+}
+
+func TestResolveLLMAgentResponsesAPI(t *testing.T) {
+	spec, err := ResolveAgentRef(&AgentRef{
+		Type:            "builtin.llm-agent",
+		Model:           "openai:gpt-5.6-luna",
+		UseResponsesAPI: new(false),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, spec.Builtin)
+	require.NotNil(t, spec.Builtin.UseResponsesAPI)
+	assert.False(t, *spec.Builtin.UseResponsesAPI)
+}
+
+func TestResolveFileLLMAgentResponsesAPI(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent.yaml")
+	err := os.WriteFile(path, []byte(`kind: Agent
+metadata:
+  name: file-llm-agent
+builtin:
+  type: llm-agent
+  model: openai:gpt-5.6-luna
+  useResponsesAPI: true
+`), 0600)
+	require.NoError(t, err)
+
+	for _, tc := range []struct {
+		name     string
+		override *bool
+		want     bool
+	}{
+		{name: "explicit false overrides file true", override: new(false), want: false},
+		{name: "omitted override preserves file true", want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			spec, err := ResolveAgentRef(&AgentRef{
+				Type:            "file",
+				Path:            path,
+				UseResponsesAPI: tc.override,
+			})
+			require.NoError(t, err)
+			require.NotNil(t, spec.Builtin)
+			require.NotNil(t, spec.Builtin.UseResponsesAPI)
+			assert.Equal(t, tc.want, *spec.Builtin.UseResponsesAPI)
+
+			runner, err := NewRunnerForSpec(spec)
+			require.NoError(t, err)
+			llmRunner, ok := runner.(*llmACPRunner)
+			require.True(t, ok)
+			require.NotNil(t, llmRunner.useResponsesAPI)
+			assert.Equal(t, tc.want, *llmRunner.useResponsesAPI)
+		})
+	}
 }
 
 func TestClaudeCodeAgent(t *testing.T) {

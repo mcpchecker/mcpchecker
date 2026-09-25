@@ -92,7 +92,7 @@ func TestLoadAgentSpec(t *testing.T) {
 				},
 			},
 			expectErr:   true,
-			errContains: "unknown builtin agent type",
+			errContains: "unknown builtin type",
 		},
 		"no agent configuration": {
 			spec: &EvalSpec{

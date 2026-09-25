@@ -15,32 +15,41 @@ func LoadWithBuiltins(yamlPath string) (*AgentSpec, error) {
 		return spec, nil
 	}
 
-	// Get builtin agent
-	builtinAgent, ok := GetBuiltinType(spec.Builtin.Type)
-	if !ok {
-		return nil, fmt.Errorf("unknown builtin type: %s", spec.Builtin.Type)
-	}
-
-	// Validate model requirement
-	if builtinAgent.RequiresModel() && spec.Builtin.Model == "" {
-		return nil, fmt.Errorf("builtin type '%s' requires a model to be specified", spec.Builtin.Type)
-	}
-
-	// Validate environment
-	if err := builtinAgent.ValidateEnvironment(); err != nil {
-		return nil, fmt.Errorf("builtin type '%s' environment validation failed: %w", spec.Builtin.Type, err)
-	}
-
-	// Get defaults from builtin
-	defaults, err := builtinAgent.GetDefaults(spec.Builtin.Model)
+	defaults, err := loadBuiltin(spec.Builtin.Type, spec.Builtin.Model)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get defaults for builtin type '%s': %w", spec.Builtin.Type, err)
+		return nil, err
 	}
 
 	// Merge: YAML overrides defaults
 	merged := mergeAgentSpecs(defaults, spec)
 
 	return merged, nil
+}
+
+func loadBuiltin(builtinType, builtinModel string) (*AgentSpec, error) {
+	// Get builtin agent
+	builtinAgent, ok := GetBuiltinType(builtinType)
+	if !ok {
+		return nil, fmt.Errorf("unknown builtin type: %s", builtinType)
+	}
+
+	// Validate model requirement
+	if builtinAgent.RequiresModel() && builtinModel == "" {
+		return nil, fmt.Errorf("builtin type '%s' requires a model to be specified", builtinType)
+	}
+
+	// Validate environment
+	if err := builtinAgent.ValidateEnvironment(); err != nil {
+		return nil, fmt.Errorf("builtin type '%s' environment validation failed: %w", builtinType, err)
+	}
+
+	// Get defaults from builtin
+	defaults, err := builtinAgent.GetDefaults(builtinModel)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get defaults for builtin type '%s': %w", builtinType, err)
+	}
+
+	return defaults, nil
 }
 
 // mergeAgentSpecs merges two agent specs, with overrides taking precedence over defaults
@@ -66,6 +75,9 @@ func mergeAgentSpecs(defaults, overrides *AgentSpec) *AgentSpec {
 			}
 			if overrides.Builtin.Model != "" {
 				result.Builtin.Model = overrides.Builtin.Model
+			}
+			if overrides.Builtin.UseResponsesAPI != nil {
+				result.Builtin.UseResponsesAPI = overrides.Builtin.UseResponsesAPI
 			}
 			if overrides.Builtin.BaseURL != "" {
 				result.Builtin.BaseURL = overrides.Builtin.BaseURL
