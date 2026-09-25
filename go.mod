@@ -3,7 +3,7 @@ module github.com/mcpchecker/mcpchecker
 go 1.27.0
 
 require (
-	charm.land/fantasy v0.43.2
+	charm.land/fantasy v0.45.1
 	github.com/coder/acp-go-sdk v0.13.5
 	github.com/fatih/color v1.19.0
 	github.com/genmcp/gen-mcp v0.2.3
@@ -46,7 +46,9 @@ require (
 	github.com/buger/jsonparser v1.1.2 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/charmbracelet/openai-go v0.0.0-20260921175203-216db9e71b83 // indirect
 	github.com/charmbracelet/x/exp/slice v0.0.0-20250904123553-b4e2667e5ad5 // indirect
+	github.com/coder/websocket v1.8.15 // indirect
 	github.com/cpuguy83/go-md2man/v2 v2.0.7 // indirect
 	github.com/cyberphone/json-canonicalization v0.0.0-20241213102144-19d51d7fe467 // indirect
 	github.com/digitorus/pkcs7 v0.0.0-20250730155240-ffadbf3f398c // indirect
@@ -96,7 +98,6 @@ require (
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/oklog/ulid/v2 v2.1.1 // indirect
-	github.com/openai/openai-go/v3 v3.54.0 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
