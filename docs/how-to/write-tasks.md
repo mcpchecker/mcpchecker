@@ -276,3 +276,83 @@ config:
 For more on assertions, see [Use Assertions](use-assertions.md).
 
 For LLM-based verification, see [LLM Judge Verification](llm-judge.md).
+
+## Using External Task Sources
+
+You can pull tasks from a GitHub repository instead of writing them locally. This is useful for consuming shared community task suites.
+
+### Declare a source
+
+Add a `sources` block to your eval config:
+
+```yaml
+kind: Eval
+metadata:
+  name: "k8s-eval"
+config:
+  agent:
+    type: "builtin.claude-code"
+  mcpConfigFile: mcp-config.yaml
+  sources:
+    k8s-tasks:
+      repo: github.com/example/k8s-tasks
+      ref: main          # branch, tag, or full commit SHA
+      path: tasks/       # optional subdirectory within the repo
+```
+
+### Reference the source in a taskSet
+
+Use the `source` field instead of `glob` or `path`:
+
+```yaml
+  taskSets:
+    - source: k8s-tasks
+      glob: "**/*.yaml"
+      labelSelector:
+        suite: kubernetes
+```
+
+### Fetch and lock
+
+Before running `check`, fetch the source and write a lockfile:
+
+```bash
+mcpchecker install
+```
+
+This resolves the ref to a commit SHA, downloads the repository, and writes `mcpchecker.lock`. Commit the lockfile alongside `eval.yaml` to pin the source version for reproducible evaluations.
+
+To refresh to the latest commit:
+
+```bash
+mcpchecker install --update
+```
+
+### Server name mapping
+
+External tasks may reference MCP server names that differ from the names in your local MCP config. During `mcpchecker install`, you are prompted to map each unknown name to a local server:
+
+```
+Map "kubernetes" → [k8s-prod]: k8s-prod
+```
+
+The mapping is written to `eval.yaml` under the source's `serverMapping` key and applied automatically at eval time. You can also set it manually:
+
+```yaml
+  sources:
+    k8s-tasks:
+      repo: github.com/example/k8s-tasks
+      ref: main
+      serverMapping:
+        kubernetes: k8s-prod   # tasks asking for "kubernetes" use "k8s-prod"
+```
+
+Or apply a mapping at the `taskSet` level to override for a specific set:
+
+```yaml
+  taskSets:
+    - source: k8s-tasks
+      glob: "**/*.yaml"
+      serverMapping:
+        kubernetes: k8s-staging
+```
