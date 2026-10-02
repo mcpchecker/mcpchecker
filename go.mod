@@ -3,7 +3,7 @@ module github.com/mcpchecker/mcpchecker
 go 1.27.0
 
 require (
-	charm.land/fantasy v0.45.1
+	charm.land/fantasy v0.45.2
 	github.com/coder/acp-go-sdk v0.13.5
 	github.com/fatih/color v1.19.0
 	github.com/genmcp/gen-mcp v0.2.3
