@@ -38,10 +38,9 @@ func TestErrorToString(t *testing.T) {
 
 func TestSafeServerRequestFromUnsafe(t *testing.T) {
 	tests := map[string]struct {
-		input          *mcp.ServerRequest[*mcp.CallToolParamsRaw]
-		expectedNil    bool
-		expectedExtra  bool
-		expectedHeader http.Header
+		input         *mcp.ServerRequest[*mcp.CallToolParamsRaw]
+		expectedNil   bool
+		expectedExtra bool
 	}{
 		"nil request returns nil": {
 			input:       nil,
@@ -62,9 +61,7 @@ func TestSafeServerRequestFromUnsafe(t *testing.T) {
 					Header: http.Header{"Authorization": []string{"Bearer token"}},
 				},
 			},
-			expectedNil:    false,
-			expectedExtra:  true,
-			expectedHeader: http.Header{"Authorization": []string{"Bearer token"}},
+			expectedExtra: true,
 		},
 		"request with Extra containing CloseSSEStream is filtered": {
 			input: &mcp.ServerRequest[*mcp.CallToolParamsRaw]{
@@ -74,9 +71,7 @@ func TestSafeServerRequestFromUnsafe(t *testing.T) {
 					CloseSSEStream: func(mcp.CloseSSEStreamArgs) {}, // non-serializable
 				},
 			},
-			expectedNil:    false,
-			expectedExtra:  true,
-			expectedHeader: http.Header{"X-Custom": []string{"value"}},
+			expectedExtra: true,
 		},
 		"Extra with only CloseSSEStream set": {
 			input: &mcp.ServerRequest[*mcp.CallToolParamsRaw]{
@@ -85,9 +80,7 @@ func TestSafeServerRequestFromUnsafe(t *testing.T) {
 					CloseSSEStream: func(mcp.CloseSSEStreamArgs) {},
 				},
 			},
-			expectedNil:    false,
-			expectedExtra:  true,
-			expectedHeader: nil,
+			expectedExtra: true,
 		},
 	}
 
@@ -105,10 +98,60 @@ func TestSafeServerRequestFromUnsafe(t *testing.T) {
 
 			if tc.expectedExtra {
 				assert.NotNil(t, result.Extra)
-				assert.Equal(t, tc.expectedHeader, result.Extra.Header)
+				data, err := json.Marshal(result)
+				require.NoError(t, err)
+				assert.NotContains(t, string(data), "Header")
 			} else {
 				assert.Nil(t, result.Extra)
 			}
+		})
+	}
+}
+
+func TestRecordedRequestsOmitHeaders(t *testing.T) {
+	headers := http.Header{
+		"Authorization": []string{"Bearer secret-token"},
+		"Cookie":        []string{"session=secret-cookie"},
+		"X-Api-Key":     []string{"secret-key"},
+	}
+	tests := map[string]struct {
+		record any
+	}{
+		"tool call": {
+			record: &ToolCall{Request: &mcp.CallToolRequest{
+				Params: &mcp.CallToolParamsRaw{Name: "test-tool"},
+				Extra:  &mcp.RequestExtra{Header: headers},
+			}},
+		},
+		"resource read": {
+			record: &ResourceRead{Request: &mcp.ReadResourceRequest{
+				Params: &mcp.ReadResourceParams{URI: "file:///test"},
+				Extra:  &mcp.RequestExtra{Header: headers},
+			}},
+		},
+		"prompt get": {
+			record: &PromptGet{Request: &mcp.GetPromptRequest{
+				Params: &mcp.GetPromptParams{Name: "test-prompt"},
+				Extra:  &mcp.RequestExtra{Header: headers},
+			}},
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			data, err := json.Marshal(tc.record)
+			require.NoError(t, err)
+
+			var result map[string]any
+			require.NoError(t, json.Unmarshal(data, &result))
+			request := result["request"].(map[string]any)
+			assert.NotEmpty(t, request["Params"])
+			extra := request["Extra"].(map[string]any)
+			assert.NotContains(t, extra, "Header")
+			assert.NotContains(t, string(data), "secret-token")
+			assert.NotContains(t, string(data), "secret-cookie")
+			assert.NotContains(t, string(data), "secret-key")
+			assert.Equal(t, "Bearer secret-token", headers.Get("Authorization"))
 		})
 	}
 }

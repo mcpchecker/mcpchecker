@@ -2,7 +2,6 @@ package mcpproxy
 
 import (
 	"encoding/json"
-	"net/http"
 	"sync"
 	"time"
 
@@ -60,7 +59,6 @@ func SafeServerRequestFromUnsafe[P mcp.Params](req *mcp.ServerRequest[P]) *SafeS
 	if req.Extra != nil {
 		res.Extra = &SafeRequestExtra{
 			TokenInfo: req.Extra.TokenInfo,
-			Header:    req.Extra.Header,
 		}
 	}
 
@@ -69,7 +67,6 @@ func SafeServerRequestFromUnsafe[P mcp.Params](req *mcp.ServerRequest[P]) *SafeS
 
 type SafeRequestExtra struct {
 	TokenInfo *auth.TokenInfo // bearer token info (e.g. from OAuth) if any
-	Header    http.Header     // header from HTTP request, if any
 }
 
 // ToolCall records a tool invocation
