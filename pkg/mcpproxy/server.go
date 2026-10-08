@@ -3,6 +3,7 @@ package mcpproxy
 import (
 	"context"
 	"fmt"
+	"maps"
 	"net"
 	"net/http"
 	"time"
@@ -97,7 +98,9 @@ func createProxyServer(ctx context.Context, cs *mcp.ClientSession, r Recorder) (
 			}
 			s.AddPrompt(p, func(ctx context.Context, gpr *mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
 				start := time.Now()
-				res, err := cs.GetPrompt(ctx, gpr.Params)
+				params := *gpr.Params
+				params.Meta = upstreamMeta(params.Meta)
+				res, err := cs.GetPrompt(ctx, &params)
 				r.RecordPromptGet(gpr, res, err, start)
 				return res, err
 			})
@@ -111,7 +114,9 @@ func createProxyServer(ctx context.Context, cs *mcp.ClientSession, r Recorder) (
 			}
 			s.AddResource(rr, func(ctx context.Context, rrr *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
 				start := time.Now()
-				res, err := cs.ReadResource(ctx, rrr.Params)
+				params := *rrr.Params
+				params.Meta = upstreamMeta(params.Meta)
+				res, err := cs.ReadResource(ctx, &params)
 				r.RecordResourceRead(rrr, res, err, start)
 				return res, err
 			})
@@ -123,7 +128,9 @@ func createProxyServer(ctx context.Context, cs *mcp.ClientSession, r Recorder) (
 			}
 			s.AddResourceTemplate(rt, func(ctx context.Context, rrr *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
 				start := time.Now()
-				res, err := cs.ReadResource(ctx, rrr.Params)
+				params := *rrr.Params
+				params.Meta = upstreamMeta(params.Meta)
+				res, err := cs.ReadResource(ctx, &params)
 				r.RecordResourceRead(rrr, res, err, start)
 				return res, err
 			})
@@ -138,7 +145,7 @@ func createProxyServer(ctx context.Context, cs *mcp.ClientSession, r Recorder) (
 			s.AddTool(t, func(ctx context.Context, ctr *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 				start := time.Now()
 				res, err := cs.CallTool(ctx, &mcp.CallToolParams{
-					Meta:      ctr.Params.Meta,
+					Meta:      upstreamMeta(ctr.Params.Meta),
 					Name:      ctr.Params.Name,
 					Arguments: ctr.Params.Arguments,
 				})
@@ -151,6 +158,34 @@ func createProxyServer(ctx context.Context, cs *mcp.ClientSession, r Recorder) (
 	return s, nil
 }
 
+// hopMetaKeys are the per-request _meta keys that describe the connection
+// between the agent and the proxy (protocol version >= 2026-07-28, SEP-2575).
+// The proxy's upstream client session sets its own values for these keys, so
+// the agent's values must not be forwarded: an upstream server would reject a
+// protocol version it did not negotiate with the proxy.
+var hopMetaKeys = []string{
+	mcp.MetaKeyProtocolVersion,
+	mcp.MetaKeyClientInfo,
+	mcp.MetaKeyClientCapabilities,
+}
+
+// upstreamMeta returns a copy of the agent's request _meta without the keys
+// that only apply to the agent to proxy connection. It returns nil if nothing
+// is left to forward, including when meta is nil or empty.
+func upstreamMeta(meta mcp.Meta) mcp.Meta {
+	if len(meta) == 0 {
+		return nil
+	}
+	out := maps.Clone(meta)
+	for _, k := range hopMetaKeys {
+		delete(out, k)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 // Run is a blocking call until ctx is cancelled or Close is called
 // Run will start the server in streamablehttp transport
 // TODO(Cali0707): update this to support other transports
@@ -159,9 +194,22 @@ func (s *server) Run(ctx context.Context) error {
 
 	mux := http.NewServeMux()
 
+	// The proxy runs stateless because go-sdk accepts protocol version
+	// 2026-07-28 and later only on stateless handlers. The proxy does not need
+	// sessions: every request is forwarded to the upstream client session, and
+	// the proxy never sends requests to the agent. Trade-offs:
+	//   - no Mcp-Session-Id is issued or read;
+	//   - GET and DELETE return 405 Method Not Allowed;
+	//   - for clients on protocol versions before 2026-07-28,
+	//     notifications/cancelled cannot reach an in-flight call. Cancellation
+	//     by closing the HTTP request works only on 2026-07-28 and later, via
+	//     PropagateRequestCancellation.
 	handler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
 		return s.proxyServer
-	}, &mcp.StreamableHTTPOptions{})
+	}, &mcp.StreamableHTTPOptions{
+		Stateless:                    true,
+		PropagateRequestCancellation: true,
+	})
 
 	mux.Handle("/mcp", handler)
 
