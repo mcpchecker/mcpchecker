@@ -1,6 +1,13 @@
 package mcpclient
 
-import "fmt"
+import (
+	"fmt"
+	"sync"
+)
+
+// resolved marks configs that have already been expanded. A second pass would
+// treat a literal ${...} inside an expanded secret as another reference.
+var resolved sync.Map
 
 // Resolve expands environment references in server URLs, headers, and auth fields.
 func (c *MCPConfig) Resolve() error {
@@ -19,6 +26,9 @@ func (s *ServerConfig) Resolve() error {
 	if s == nil {
 		return nil
 	}
+	if _, ok := resolved.Load(s); ok {
+		return nil
+	}
 	s.URL = expandEnv(s.URL)
 	if s.Headers != nil {
 		for k, v := range s.Headers {
@@ -35,5 +45,6 @@ func (s *ServerConfig) Resolve() error {
 			return fmt.Errorf("unsupported auth type %q", s.Auth.Type)
 		}
 	}
+	resolved.Store(s, struct{}{})
 	return nil
 }

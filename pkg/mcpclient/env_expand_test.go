@@ -20,6 +20,23 @@ func TestExpandEnv(t *testing.T) {
 	assert.Equal(t, "fallback", expandEnv("${EMPTY:-fallback}"))
 }
 
+func TestResolveExpandsOnce(t *testing.T) {
+	t.Setenv("SECRET", "has ${NOT_A_VAR} inside")
+	cfg := &ServerConfig{
+		Type: TransportTypeHttp,
+		URL:  "http://example.com/mcp",
+		Auth: &AuthConfig{
+			Type:         "client_credentials",
+			TokenURL:     "http://example.com/token",
+			ClientID:     "id",
+			ClientSecret: "${SECRET}",
+		},
+	}
+	require.NoError(t, cfg.Resolve())
+	require.NoError(t, cfg.Resolve())
+	assert.Equal(t, "has ${NOT_A_VAR} inside", cfg.Auth.ClientSecret)
+}
+
 func TestParseConfigResolvesAuthEnv(t *testing.T) {
 	t.Setenv("MCPCHECKER_TEST_URL", "http://example.com/mcp")
 	t.Setenv("MCPCHECKER_TEST_ID", "my-id")

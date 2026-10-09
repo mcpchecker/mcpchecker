@@ -18,6 +18,11 @@ import (
 // header with a client-credentials token that is refreshed before expiry and
 // once after a 401.
 func NewHTTPClient(cfg *ServerConfig) (*http.Client, error) {
+	if cfg.Auth != nil {
+		if err := cfg.Resolve(); err != nil {
+			return nil, err
+		}
+	}
 	base := http.DefaultTransport
 	var extra http.Header
 	if len(cfg.Headers) > 0 {
@@ -31,19 +36,19 @@ func NewHTTPClient(cfg *ServerConfig) (*http.Client, error) {
 		if cfg.Auth.Type != "client_credentials" {
 			return nil, fmt.Errorf("unsupported auth type %q", cfg.Auth.Type)
 		}
-		tokenURL := expandEnv(cfg.Auth.TokenURL)
-		clientID := expandEnv(cfg.Auth.ClientID)
-		clientSecret := expandEnv(cfg.Auth.ClientSecret)
+		tokenURL := cfg.Auth.TokenURL
+		clientID := cfg.Auth.ClientID
+		clientSecret := cfg.Auth.ClientSecret
 		if tokenURL == "" || clientID == "" || clientSecret == "" {
 			return nil, fmt.Errorf("client_credentials auth requires tokenUrl, clientId, and clientSecret")
 		}
 		var scopes []string
-		if scope := expandEnv(cfg.Auth.Scope); scope != "" {
-			scopes = strings.Fields(scope)
+		if cfg.Auth.Scope != "" {
+			scopes = strings.Fields(cfg.Auth.Scope)
 		}
-		resource := expandEnv(cfg.Auth.Resource)
+		resource := cfg.Auth.Resource
 		if resource == "" {
-			resource = expandEnv(cfg.URL)
+			resource = cfg.URL
 		}
 		var params url.Values
 		if resource != "" {
@@ -81,20 +86,24 @@ type refreshingTokenSource struct {
 	tok *oauth2.Token
 }
 
-func (s *refreshingTokenSource) Token() (*oauth2.Token, error) {
+func (s *refreshingTokenSource) Token(ctx context.Context) (*oauth2.Token, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.tok.Valid() {
-		return s.tok, nil
+	tok := s.tok
+	s.mu.Unlock()
+	if tok.Valid() {
+		return tok, nil
 	}
 	// A new TokenSource starts empty, so this always hits the token endpoint
 	// when our cache is empty or the cached token is no longer valid.
-	tok, err := s.conf.TokenSource(context.Background()).Token()
+	// ctx is the MCP request context, so cancelling that request cancels the fetch.
+	fresh, err := s.conf.TokenSource(ctx).Token()
 	if err != nil {
 		return nil, err
 	}
-	s.tok = tok
-	return tok, nil
+	s.mu.Lock()
+	s.tok = fresh
+	s.mu.Unlock()
+	return fresh, nil
 }
 
 func (s *refreshingTokenSource) reset() {
@@ -123,7 +132,7 @@ func (t *bearerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 func (t *bearerTransport) roundTrip(req *http.Request) (*http.Response, error) {
-	tok, err := t.source.Token()
+	tok, err := t.source.Token(req.Context())
 	if err != nil {
 		return nil, err
 	}
@@ -134,6 +143,10 @@ func (t *bearerTransport) roundTrip(req *http.Request) (*http.Response, error) {
 			return nil, err
 		}
 		cloned.Body = body
+		if req.Body != nil {
+			req.Body.Close()
+			req.Body = nil
+		}
 	}
 	tok.SetAuthHeader(cloned)
 	return t.base.RoundTrip(cloned)

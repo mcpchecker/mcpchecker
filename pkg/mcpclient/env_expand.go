@@ -6,14 +6,15 @@ import (
 	"strings"
 )
 
+var envPattern = regexp.MustCompile(`\$\{([^}:]+)(?::-([^}]*))?\}`)
+
 // expandEnv replaces ${VAR} and ${VAR:-default} with environment values.
 func expandEnv(s string) string {
 	if s == "" || !strings.Contains(s, "${") {
 		return s
 	}
-	re := regexp.MustCompile(`\$\{([^}:]+)(?::-([^}]*))?\}`)
-	return re.ReplaceAllStringFunc(s, func(match string) string {
-		sub := re.FindStringSubmatch(match)
+	return envPattern.ReplaceAllStringFunc(s, func(match string) string {
+		sub := envPattern.FindStringSubmatch(match)
 		if len(sub) < 2 {
 			return match
 		}
