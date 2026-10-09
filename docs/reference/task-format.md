@@ -137,6 +137,8 @@ Runs a script file or inline script content.
     # or
     inline: string          # Inline script content.
 
+    env:                    # Optional. Extra environment variables for the script.
+      NAME: value           #   Values can use template variables (see below).
     timeout: string         # Optional. Default: 5m. Duration format.
     continueOnError: bool   # Optional. Default: false. If true, step failure does not stop execution.
 ```
@@ -184,6 +186,41 @@ One of `contains` or `exact` must be specified, but not both.
 - llmJudge:
     contains: "The pod is running in the default namespace"
 ```
+
+## Template Variables
+
+Some step fields accept `{source.field}` template variables, which are resolved when the step runs. This section covers the variables that give a step the agent's response:
+
+| Variable | Value |
+|----------|-------|
+| `{agent.output}` | The agent's final response |
+| `{agent.prompt}` | The prompt the agent was given |
+
+The `agent` variables are only available in the `verify` phase. In `setup` or `cleanup` the step fails with an error, because the agent has not run yet.
+
+Fields that accept template variables:
+
+| Step | Fields |
+|------|--------|
+| `script` | `env` values (not `file` or `inline`) |
+| `http` | `url`, `method`, `headers` values |
+| `llmJudge` | `contains`, `exact` |
+
+These fields also accept `{env.NAME}`, `{random.id}` and `{random.port}`, and, except in `http`, `{steps.<type>.<key>}`. `${NAME}` is shorthand for `{env.NAME}`.
+
+The value is substituted as-is, with no quoting or escaping. In a script, pass it through `env` and read it from the environment variable rather than templating it into the script text. Quote the value in YAML, because an unquoted `{` starts a YAML mapping:
+
+```yaml
+verify:
+  - script:
+      env:
+        AGENT_OUTPUT: "{agent.output}"
+      inline: |
+        #!/usr/bin/env bash
+        grep -qw "42" <<< "$AGENT_OUTPUT"
+```
+
+In these fields, braces are always treated as template syntax and cannot be escaped: a literal `{`, `}` or `${...}` will fail or be expanded by mcpchecker. In a script, put such text in the script body or read it from a file; `http` and `llmJudge` fields have no workaround.
 
 ## Using Extensions
 
