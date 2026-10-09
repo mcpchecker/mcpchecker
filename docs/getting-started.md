@@ -90,6 +90,25 @@ mcpServers:
     enableAllTools: true
 ```
 
+`${VAR}` and `${VAR:-default}` in `url`, `headers`, and `auth` are expanded from the environment when the config is loaded. Servers that use OAuth client credentials can omit a static bearer token:
+
+```yaml
+mcpServers:
+  example:
+    type: http
+    url: ${MCP_URL}
+    enableAllTools: true
+    auth:
+      type: client_credentials
+      tokenUrl: ${MCP_TOKEN_URL}
+      clientId: ${MCP_CLIENT_ID}
+      clientSecret: ${MCP_CLIENT_SECRET}
+      scope: ${MCP_OAUTH_SCOPE} # optional, space-separated
+      resource: ${MCP_RESOURCE} # optional, defaults to the server url
+```
+
+The client fetches an access token, refreshes it shortly before expiry, and retries a request once after an HTTP 401. A static `Authorization` header is left unchanged when `auth` is omitted.
+
 **tasks/create-pod.yaml**:
 ```yaml
 kind: Task
