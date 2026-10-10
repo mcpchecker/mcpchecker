@@ -28,6 +28,10 @@ func NewManager(ctx context.Context, config *MCPConfig) (Manager, error) {
 		return nil, fmt.Errorf("no config provided")
 	}
 
+	if err := config.Resolve(); err != nil {
+		return nil, fmt.Errorf("invalid config: %w", err)
+	}
+
 	servers := config.GetEnabledServers()
 
 	if len(servers) == 0 {
