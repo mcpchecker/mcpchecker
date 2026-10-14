@@ -3,7 +3,6 @@ package mcpclient
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"os"
 	"os/exec"
 	"slices"
@@ -17,19 +16,19 @@ type Client struct {
 }
 
 func Connect(ctx context.Context, cfg *ServerConfig) (*Client, error) {
+	if err := cfg.Resolve(); err != nil {
+		return nil, err
+	}
 	var transport mcp.Transport
 	if cfg.IsHttp() {
-		hdrs := make(http.Header, len(cfg.Headers))
-		for k, v := range cfg.Headers {
-			hdrs.Set(k, v)
-		}
-		client := &http.Client{
-			Transport: NewHeaderRoundTripper(hdrs, nil),
+		httpClient, err := NewHTTPClient(cfg)
+		if err != nil {
+			return nil, err
 		}
 
 		transport = &mcp.StreamableClientTransport{
 			Endpoint:   cfg.URL,
-			HTTPClient: client,
+			HTTPClient: httpClient,
 		}
 	} else {
 		cmd := exec.Command(cfg.Command, cfg.Args...)

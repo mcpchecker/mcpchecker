@@ -62,9 +62,9 @@ func TestParseConfigFile(t *testing.T) {
 				MCPServers: map[string]*ServerConfig{
 					"api-server": {
 						Type: "http",
-						URL:  "${API_BASE_URL:-https://api.example.com}/mcp",
+						URL:  "https://api.example.com/mcp",
 						Headers: map[string]string{
-							"Authorization": "Bearer ${API_KEY}",
+							"Authorization": "Bearer ",
 						},
 					},
 				},
@@ -77,6 +77,10 @@ func TestParseConfigFile(t *testing.T) {
 
 	for tn, tc := range tt {
 		t.Run(tn, func(t *testing.T) {
+			if tn == "http-server" {
+				t.Setenv("API_BASE_URL", "")
+				t.Setenv("API_KEY", "")
+			}
 			got, err := ParseConfigFile(fmt.Sprintf("%s/%s", basePath, tc.file))
 			if tc.expectErr {
 				assert.Error(t, err)
