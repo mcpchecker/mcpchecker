@@ -41,6 +41,14 @@ func ResolveCapabilities(assertions TaskAssertions, inventory CapabilityInventor
 
 	result.Assertions.ToolsUsed = filterTools(assertionTypeToolsUsed, assertions.ToolsUsed)
 	result.Assertions.ToolsNotUsed = filterTools(assertionTypeToolsNotUsed, assertions.ToolsNotUsed)
+	result.Assertions.Apps = make([]AppAssertion, 0, len(assertions.Apps))
+	for _, app := range assertions.Apps {
+		if reason, target := toolPresence(ToolAssertion{Server: app.Server, Tool: app.Tool}, inventory); reason != "" {
+			addMissing(AssertionPresenceResult{Type: assertionTypeApps, Server: app.Server, Target: target, Reason: reason})
+			continue
+		}
+		result.Assertions.Apps = append(result.Assertions.Apps, app)
+	}
 
 	result.Assertions.RequireAny = make([]ToolAssertion, 0, len(assertions.RequireAny))
 	var firstMissing *AssertionPresenceResult
@@ -90,6 +98,7 @@ func ResolveCapabilities(assertions TaskAssertions, inventory CapabilityInventor
 
 func cloneTaskAssertions(assertions TaskAssertions) TaskAssertions {
 	copyAssertions := assertions
+	copyAssertions.Apps = append(assertions.Apps[:0:0], assertions.Apps...)
 	copyAssertions.ToolsUsed = append([]ToolAssertion(nil), assertions.ToolsUsed...)
 	copyAssertions.RequireAny = append([]ToolAssertion(nil), assertions.RequireAny...)
 	copyAssertions.ToolsNotUsed = append([]ToolAssertion(nil), assertions.ToolsNotUsed...)
@@ -136,7 +145,7 @@ func toolAssertionTarget(assertion ToolAssertion) string {
 
 func hasVisibleTool(name string, tools []string) bool {
 	for _, tool := range tools {
-	if tool == name {
+		if tool == name {
 			return true
 		}
 	}

@@ -1,16 +1,21 @@
 package eval
 
-import "net/url"
+import (
+	"net/url"
+
+	"github.com/mcpchecker/mcpchecker/pkg/mcpapps"
+)
 
 // EvalOutput wraps evaluation results with configuration summary metadata.
 // This is the top-level structure written to the JSON output file.
 type EvalOutput struct {
-	Summary *EvalSummary `json:"summary"`
+	Summary *EvalSummary  `json:"summary"`
 	Results []*EvalResult `json:"results"`
 }
 
 // EvalSummary captures the resolved configuration used for an evaluation run.
 type EvalSummary struct {
+	Apps            *mcpapps.Config    `json:"apps,omitempty"`
 	Agent           *AgentSummary      `json:"agent"`
 	Judge           *JudgeSummary      `json:"judge,omitempty"`
 	MCPServers      []MCPServerSummary `json:"mcpServers,omitempty"`

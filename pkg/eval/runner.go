@@ -16,6 +16,7 @@ import (
 	"github.com/mcpchecker/mcpchecker/pkg/extension/client"
 	"github.com/mcpchecker/mcpchecker/pkg/extension/resolver"
 	"github.com/mcpchecker/mcpchecker/pkg/llmjudge"
+	"github.com/mcpchecker/mcpchecker/pkg/mcpapps"
 	"github.com/mcpchecker/mcpchecker/pkg/mcpclient"
 	"github.com/mcpchecker/mcpchecker/pkg/mcpproxy"
 	"github.com/mcpchecker/mcpchecker/pkg/task"
@@ -40,6 +41,7 @@ type EvalResult struct {
 	AssertionResults    *CompositeAssertionResult `json:"assertionResults"`
 	AllAssertionsPassed bool                      `json:"allAssertionsPassed"`
 	CallHistory         *mcpproxy.CallHistory     `json:"callHistory"`
+	AppObservations     []mcpapps.Observation     `json:"appObservations,omitempty"`
 
 	// TokenEstimate contains token count estimates from agent execution.
 	// Uses tiktoken (cl100k_base encoding). Excludes system prompt and cache tokens.
@@ -170,6 +172,9 @@ func (r *evalRunner) Run(ctx context.Context, taskPattern string) (*EvalOutput, 
 
 func (r *evalRunner) RunWithProgress(ctx context.Context, taskPattern string, callback ProgressCallback) (*EvalOutput, error) {
 	r.progressCallback = callback
+	if r.spec.Config.Apps.Host {
+		ctx = mcpapps.WithHost(ctx)
+	}
 
 	if taskPattern == "" {
 		taskPattern = "." // match everything (any character matches all task names)
@@ -269,6 +274,19 @@ func (r *evalRunner) RunWithProgress(ctx context.Context, taskPattern string, ca
 		return nil, err
 	}
 
+	for _, tc := range taskConfigs {
+		for _, set := range tc.assertions {
+			if set == nil {
+				continue
+			}
+			for _, a := range set.Apps {
+				if err := a.Validate(); err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+
 	// Build summary from resolved configuration
 	summary, err := r.buildSummary(ctx, agentSpec, mcpConfig, judge, taskConfigs)
 	if err != nil {
@@ -318,6 +336,11 @@ func (r *evalRunner) buildSummary(
 	summary := &EvalSummary{
 		ParallelWorkers: r.parallelWorkers,
 		Runs:            r.runs,
+	}
+
+	if r.spec.Config.Apps.Host {
+		config := r.spec.Config.Apps
+		summary.Apps = &config
 	}
 
 	// Agent — include ref-level info plus resolved spec details
@@ -804,6 +827,18 @@ func (r *evalRunner) runTask(
 		defer taskCancel()
 	}
 
+	var expected []mcpapps.Assertion
+	for _, set := range tc.assertions {
+		if set != nil {
+			expected = append(expected, set.Apps...)
+		}
+	}
+	var appCollector *mcpapps.Collector
+	if len(expected) > 0 {
+		appCollector = mcpapps.NewCollector(expected)
+		taskCtx = mcpapps.WithCollector(taskCtx, appCollector)
+	}
+
 	taskRunner, manager, cleanup, err := r.setupTaskResources(taskCtx, tc, result)
 	if err != nil {
 		result.TaskPassed = false
@@ -846,6 +881,9 @@ func (r *evalRunner) runTask(
 	}()
 
 	r.executeTaskSteps(taskCtx, taskRunner, agentRunner, manager, result)
+	if appCollector != nil {
+		result.AppObservations = appCollector.Finish()
+	}
 
 	// Check if executeTaskSteps was terminated by timeout
 	if hasTaskTimeout && taskCtx.Err() == context.DeadlineExceeded && !result.TimedOut {
@@ -1123,6 +1161,7 @@ func (r *evalRunner) evaluateTaskAssertions(
 
 		// Evaluate skill assertions against agent tool calls
 		r.evaluateSkillAssertions(filteredAssertions, agentToolCalls, assertionResults)
+		assertionResults.Apps = evaluateApps(filteredAssertions.Apps, result.AppObservations)
 
 		if combinedResults == nil {
 			combinedResults = assertionResults
@@ -1156,6 +1195,9 @@ func requiredToolDiscoveryServers(assertionSets []*TaskAssertions) map[string]st
 		addTools(assertions.ToolsUsed)
 		addTools(assertions.RequireAny)
 		addTools(assertions.ToolsNotUsed)
+		for _, app := range assertions.Apps {
+			servers[app.Server] = struct{}{}
+		}
 		for _, assertion := range assertions.CallOrder {
 			if assertion.Type == callTypeTool {
 				servers[assertion.Server] = struct{}{}

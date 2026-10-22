@@ -46,6 +46,10 @@ func ComputeCallHistoryTokens(history *CallHistory) string {
 	}
 
 	for _, rr := range history.ResourceReads {
+		if rr.HostUIRead {
+			rr.Tokens = nil
+			continue
+		}
 		var inputTokens, outputTokens int64
 
 		// Count input tokens (request params - URI)
