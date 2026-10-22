@@ -6,7 +6,19 @@ import (
 	"testing"
 
 	"github.com/mcpchecker/mcpchecker/pkg/eval"
+	"github.com/stretchr/testify/require"
 )
+
+func TestPrintRunAssertionSummaryApps(t *testing.T) {
+	result := &eval.CompositeAssertionResult{Apps: &eval.SingleAssertionResult{
+		Reason: "missing_ui_resource", Details: []string{"fixture/view app-1"},
+	}}
+	var output bytes.Buffer
+	printRunAssertionSummary(&output, result, false)
+	require.Contains(t, output.String(), "Assertions: FAILED (0/1)")
+	require.Contains(t, output.String(), "- Apps: missing_ui_resource")
+	require.Contains(t, output.String(), "fixture/view app-1")
+}
 
 func TestPrintRunAssertionSummarySkippedAssertion(t *testing.T) {
 	result := &eval.CompositeAssertionResult{

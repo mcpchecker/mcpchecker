@@ -297,10 +297,17 @@ func printCallHistory(w io.Writer, history *mcpproxy.CallHistory, opts viewOptio
 	}
 
 	toolCalls := len(history.ToolCalls)
-	resourceReads := len(history.ResourceReads)
+	resourceReads, uiReads := 0, 0
+	for _, read := range history.ResourceReads {
+		if read.HostUIRead {
+			uiReads++
+		} else {
+			resourceReads++
+		}
+	}
 	promptGets := len(history.PromptGets)
 
-	if toolCalls == 0 && resourceReads == 0 && promptGets == 0 {
+	if toolCalls == 0 && resourceReads == 0 && uiReads == 0 && promptGets == 0 {
 		return
 	}
 
@@ -313,6 +320,9 @@ func printCallHistory(w io.Writer, history *mcpproxy.CallHistory, opts viewOptio
 	}
 	if resourceReads > 0 {
 		fmt.Fprintf(w, " resources=%d", resourceReads)
+	}
+	if uiReads > 0 {
+		fmt.Fprintf(w, " uiReads=%d", uiReads)
 	}
 	if promptGets > 0 {
 		fmt.Fprintf(w, " prompts=%d", promptGets)
