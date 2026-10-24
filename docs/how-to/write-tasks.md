@@ -60,6 +60,23 @@ Runs a script file or inline script. Exit code 0 means success.
       kubectl wait --for=condition=Ready pod/web-server -n test-ns --timeout=120s
 ```
 
+#### Checking the agent's answer in a script
+
+A verify script can read the agent's final response. Pass it in through `env` with the `{agent.output}` template variable:
+
+```yaml
+verify:
+  - script:
+      env:
+        AGENT_OUTPUT: "{agent.output}"
+      inline: |
+        #!/usr/bin/env bash
+        # Pass if the answer mentions the pod we expect
+        grep -q "web-server" <<< "$AGENT_OUTPUT"
+```
+
+This is useful when the right answer can only be known at run time, for example a count your script fetches from the system under test and compares with the number in the agent's answer. `{agent.prompt}` gives the prompt the same way. Both only work in the `verify` phase. See [Template Variables](../reference/task-format.md#template-variables) for the other fields that accept them.
+
 ### HTTP
 
 Makes an HTTP request and validates the response:
