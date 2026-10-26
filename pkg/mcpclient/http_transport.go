@@ -32,6 +32,15 @@ func NewHTTPClient(cfg *ServerConfig) (*http.Client, error) {
 		}
 	}
 
+	// Reject redirects that leave the configured MCP server's origin. The
+	// transports below re-attach credentials (a bearer token or static
+	// headers such as Authorization/API keys) to every request they see,
+	// which would otherwise also apply to a redirected request. Without this
+	// check, a malicious or compromised MCP server could use a redirect to
+	// exfiltrate those credentials to an unrelated host, including via an
+	// https -> http downgrade.
+	client := &http.Client{CheckRedirect: disallowCrossOriginRedirects}
+
 	if cfg.Auth != nil {
 		if cfg.Auth.Type != "client_credentials" {
 			return nil, fmt.Errorf("unsupported auth type %q", cfg.Auth.Type)
@@ -68,13 +77,31 @@ func NewHTTPClient(cfg *ServerConfig) (*http.Client, error) {
 		if len(extra) > 0 {
 			inner = NewHeaderRoundTripper(extra, base)
 		}
-		return &http.Client{Transport: &bearerTransport{source: src, base: inner}}, nil
+		client.Transport = &bearerTransport{source: src, base: inner}
+		return client, nil
 	}
 
 	if len(extra) > 0 {
-		return &http.Client{Transport: NewHeaderRoundTripper(extra, base)}, nil
+		client.Transport = NewHeaderRoundTripper(extra, base)
+		return client, nil
 	}
-	return &http.Client{Transport: base}, nil
+	client.Transport = base
+	return client, nil
+}
+
+// disallowCrossOriginRedirects implements http.Client.CheckRedirect. It
+// rejects any redirect whose scheme, host, or port differs from the first
+// request in the chain (i.e. the configured MCP server URL), including an
+// https -> http downgrade on the same host.
+func disallowCrossOriginRedirects(req *http.Request, via []*http.Request) error {
+	if len(via) == 0 {
+		return nil
+	}
+	orig := via[0].URL
+	if req.URL.Scheme != orig.Scheme || req.URL.Host != orig.Host {
+		return fmt.Errorf("refusing to follow cross-origin redirect from %s to %s", orig, req.URL)
+	}
+	return nil
 }
 
 // refreshingTokenSource caches a client-credentials token until it is near
