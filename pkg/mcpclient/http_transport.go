@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -51,6 +52,12 @@ func NewHTTPClient(cfg *ServerConfig) (*http.Client, error) {
 		if tokenURL == "" || clientID == "" || clientSecret == "" {
 			return nil, fmt.Errorf("client_credentials auth requires tokenUrl, clientId, and clientSecret")
 		}
+		if err := requireSecureURL("tokenUrl", tokenURL); err != nil {
+			return nil, err
+		}
+		if err := requireSecureURL("url", cfg.URL); err != nil {
+			return nil, err
+		}
 		var scopes []string
 		if cfg.Auth.Scope != "" {
 			scopes = strings.Fields(cfg.Auth.Scope)
@@ -71,9 +78,18 @@ func NewHTTPClient(cfg *ServerConfig) (*http.Client, error) {
 				Scopes:         scopes,
 				EndpointParams: params,
 			},
+			// The token endpoint is a separate trust boundary from the MCP
+			// server itself. Without this, golang.org/x/oauth2 would fall
+			// back to http.DefaultClient for the token request, which has no
+			// redirect protection: a malicious/compromised token endpoint
+			// could 307/308-redirect the request (Go preserves the POST body
+			// on those codes) and receive clientId/clientSecret at an
+			// unrelated host if the exchange falls back to sending them in
+			// the request body.
+			httpClient: &http.Client{CheckRedirect: disallowCrossOriginRedirects},
 		}
 		delete(extra, "Authorization")
-		var inner http.RoundTripper = base
+		inner := base
 		if len(extra) > 0 {
 			inner = NewHeaderRoundTripper(extra, base)
 		}
@@ -104,10 +120,38 @@ func disallowCrossOriginRedirects(req *http.Request, via []*http.Request) error 
 	return nil
 }
 
+// requireSecureURL rejects plaintext http:// URLs so OAuth credentials (the
+// client secret sent to tokenUrl, or the bearer token sent to the MCP
+// server) are never sent in cleartext. http is still allowed for loopback
+// hosts so local development and tests (e.g. httptest servers) keep working.
+func requireSecureURL(field, raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("invalid %s: %w", field, err)
+	}
+	switch u.Scheme {
+	case "https":
+		return nil
+	case "http":
+		host := u.Hostname()
+		if host == "localhost" {
+			return nil
+		}
+		if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+			return nil
+		}
+	}
+	return fmt.Errorf("%s must use https when auth is configured (http is allowed only for loopback hosts)", field)
+}
+
 // refreshingTokenSource caches a client-credentials token until it is near
 // expiry. reset drops the cache so the next request fetches a new token.
 type refreshingTokenSource struct {
 	conf *clientcredentials.Config
+	// httpClient is used for the token endpoint request itself; see the
+	// comment where this is constructed for why it needs its own
+	// redirect protection.
+	httpClient *http.Client
 
 	mu  sync.Mutex
 	tok *oauth2.Token
@@ -123,6 +167,7 @@ func (s *refreshingTokenSource) Token(ctx context.Context) (*oauth2.Token, error
 	// A new TokenSource starts empty, so this always hits the token endpoint
 	// when our cache is empty or the cached token is no longer valid.
 	// ctx is the MCP request context, so cancelling that request cancels the fetch.
+	ctx = context.WithValue(ctx, oauth2.HTTPClient, s.httpClient)
 	fresh, err := s.conf.TokenSource(ctx).Token()
 	if err != nil {
 		return nil, err
