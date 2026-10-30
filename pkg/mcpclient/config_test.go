@@ -30,8 +30,9 @@ func TestParseConfigFile(t *testing.T) {
 			expected: &MCPConfig{
 				MCPServers: map[string]*ServerConfig{
 					"filesystem": {
-						Command: "npx",
-						Args:    []string{"-y", "@modelcontextprotocol/server-filesystem", "/tmp"},
+						Command:  "npx",
+						Args:     []string{"-y", "@modelcontextprotocol/server-filesystem", "/tmp"},
+						resolved: true,
 					},
 				},
 			},
@@ -49,6 +50,7 @@ func TestParseConfigFile(t *testing.T) {
 						Env: map[string]string{
 							"POSTGRES_PASSWORD": "secret",
 						},
+						resolved: true,
 					},
 				},
 			},
@@ -66,6 +68,7 @@ func TestParseConfigFile(t *testing.T) {
 						Headers: map[string]string{
 							"Authorization": "Bearer ",
 						},
+						resolved: true,
 					},
 				},
 			},
