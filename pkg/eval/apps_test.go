@@ -16,6 +16,9 @@ func TestAppAssertions(t *testing.T) {
 	spec, err := Read([]byte(`kind: Eval
 apiVersion: mcpchecker/v1alpha2
 config:
+  agent:
+    type: builtin.llm-agent
+    model: openai:test
   taskSets:
     - path: ./namespaces.yaml
       assertions:
@@ -24,7 +27,7 @@ config:
             tool: namespaces_list
 `), t.TempDir())
 	require.NoError(t, err)
-	require.False(t, spec.Config.Apps.Host, "Apps assertions do not require or enable host emulation")
+	require.Nil(t, spec.Config.Agent.Apps, "Apps assertions do not require or enable host emulation")
 	require.False(t, spec.Config.TaskSets[0].Assertions.IsEmpty())
 	expected := spec.Config.TaskSets[0].Assertions.Apps
 	observation := mcpapps.Observation{Server: "kubernetes", Tool: "namespaces_list", CallID: "app-1", URI: "ui://namespaces", MIMEType: mcpapps.MIMEType}

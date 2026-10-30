@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/mcpchecker/mcpchecker/pkg/acpclient"
+	"github.com/mcpchecker/mcpchecker/pkg/mcpapps"
 	"github.com/mcpchecker/mcpchecker/pkg/util"
 	"sigs.k8s.io/yaml"
 )
@@ -20,6 +21,7 @@ type AgentSpec struct {
 	AcpConfig     *acpclient.AcpConfig `json:"acp,omitempty"` // if builtin and acp are both set, default to acp
 	Commands      AgentCommands        `json:"commands"`
 	Skills        *AgentSkillsConfig   `json:"skills,omitempty"`
+	Apps          *mcpapps.Config      `json:"apps,omitempty"`
 }
 
 // AgentSkillsConfig defines agent-specific skill loading behavior
@@ -51,6 +53,9 @@ type AgentRef struct {
 	// UseResponsesAPI explicitly enables or disables the OpenAI Responses API.
 	// When omitted, models known to require Responses are selected automatically.
 	UseResponsesAPI *bool `json:"useResponsesAPI,omitempty"`
+
+	// Apps overrides this agent's Apps host handling, including for file references.
+	Apps *mcpapps.Config `json:"apps,omitempty"`
 }
 
 // BuiltinRef references a built-in agent type with optional model

@@ -13,7 +13,7 @@ const MIMEType = "text/html;profile=mcp-app"
 
 type Config struct {
 	// Host opts into UI capability negotiation and the model-facing Apps tool surface.
-	Host bool `json:"host,omitempty"`
+	Host bool `json:"host"`
 }
 
 // Assertion requires a retrievable HTML UI resource from every invocation of

@@ -13,7 +13,6 @@ import (
 	"github.com/mcpchecker/mcpchecker/pkg/assertion"
 	"github.com/mcpchecker/mcpchecker/pkg/extension"
 	"github.com/mcpchecker/mcpchecker/pkg/llmjudge"
-	"github.com/mcpchecker/mcpchecker/pkg/mcpapps"
 	"github.com/mcpchecker/mcpchecker/pkg/util"
 )
 
@@ -40,9 +39,6 @@ type EvalMetadata struct {
 }
 
 type EvalConfig struct {
-	// Apps configures opt-in UI host emulation, independently of Apps assertions.
-	Apps mcpapps.Config `json:"apps,omitempty"`
-
 	// Agent configuration
 	Agent *agent.AgentRef `json:"agent"`
 

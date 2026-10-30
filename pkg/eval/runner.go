@@ -172,7 +172,11 @@ func (r *evalRunner) Run(ctx context.Context, taskPattern string) (*EvalOutput, 
 
 func (r *evalRunner) RunWithProgress(ctx context.Context, taskPattern string, callback ProgressCallback) (*EvalOutput, error) {
 	r.progressCallback = callback
-	if r.spec.Config.Apps.Host {
+	agentSpec, err := r.loadAgentSpec()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load agent spec: %w", err)
+	}
+	if agentSpec.Apps != nil && agentSpec.Apps.Host {
 		ctx = mcpapps.WithHost(ctx)
 	}
 
@@ -208,11 +212,6 @@ func (r *evalRunner) RunWithProgress(ctx context.Context, taskPattern string, ca
 			_ = mcpManager.Close(closeCtx)
 		}()
 		ctx = mcpclient.ManagerToContext(ctx, mcpManager)
-	}
-
-	agentSpec, err := r.loadAgentSpec()
-	if err != nil {
-		return nil, fmt.Errorf("failed to load agent spec: %w", err)
 	}
 
 	runner, err := agent.NewRunnerForSpec(agentSpec)
@@ -338,11 +337,6 @@ func (r *evalRunner) buildSummary(
 		Runs:            r.runs,
 	}
 
-	if r.spec.Config.Apps.Host {
-		config := r.spec.Config.Apps
-		summary.Apps = &config
-	}
-
 	// Agent — include ref-level info plus resolved spec details
 	if r.spec.Config.Agent != nil {
 		agentSummary := &AgentSummary{
@@ -352,6 +346,7 @@ func (r *evalRunner) buildSummary(
 		}
 		if agentSpec != nil {
 			agentSummary.Name = agentSpec.Metadata.Name
+			agentSummary.Apps = agentSpec.Apps
 			if agentSummary.Model == "" && agentSpec.Builtin != nil {
 				agentSummary.Model = agentSpec.Builtin.Model
 			}

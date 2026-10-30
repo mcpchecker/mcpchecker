@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"mime"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -118,12 +119,23 @@ func (c *Collector) Observe(ctx context.Context, server string, tool *mcp.Tool, 
 		o.Detail = ErrorDetail(callErr)
 		return
 	}
-	o.URI = resourceURI(result.Meta)
-	if o.URI == "" {
-		o.URI = ResourceURI(tool)
+	reference := resourceURI(result.Meta)
+	if reference == "" {
+		reference = ResourceURI(tool)
 	}
+	if len(reference) > 2048 {
+		o.Code = "invalid_ui_resource_uri"
+		return
+	}
+	o.URI = reference
 	if o.URI == "" {
 		o.Code = "missing_ui_resource"
+		return
+	}
+	uri, err := url.Parse(o.URI)
+	if err != nil || !strings.HasPrefix(o.URI, "ui://") ||
+		(uri.Host == "" && uri.Path == "") || strings.ContainsAny(o.URI, " \t\r\n") {
+		o.Code = "invalid_ui_resource_uri"
 		return
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)

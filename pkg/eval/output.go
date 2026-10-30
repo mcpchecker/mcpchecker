@@ -15,7 +15,6 @@ type EvalOutput struct {
 
 // EvalSummary captures the resolved configuration used for an evaluation run.
 type EvalSummary struct {
-	Apps            *mcpapps.Config    `json:"apps,omitempty"`
 	Agent           *AgentSummary      `json:"agent"`
 	Judge           *JudgeSummary      `json:"judge,omitempty"`
 	MCPServers      []MCPServerSummary `json:"mcpServers,omitempty"`
@@ -34,11 +33,12 @@ type SkillSummary struct {
 
 // AgentSummary describes the agent configuration.
 type AgentSummary struct {
-	Type    string `json:"type"`
-	Name    string `json:"name,omitempty"`
-	Model   string `json:"model,omitempty"`
-	Path    string `json:"path,omitempty"`
-	Command string `json:"command,omitempty"`
+	Apps    *mcpapps.Config `json:"apps,omitempty"`
+	Type    string          `json:"type"`
+	Name    string          `json:"name,omitempty"`
+	Model   string          `json:"model,omitempty"`
+	Path    string          `json:"path,omitempty"`
+	Command string          `json:"command,omitempty"`
 }
 
 // JudgeSummary describes the LLM judge configuration.

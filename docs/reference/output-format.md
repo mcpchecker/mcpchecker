@@ -120,10 +120,11 @@ See the [CLI reference](cli/mcpchecker.md) for full details on each command.
 
 ## MCP Apps observations
 
-Evals opting into Apps protocol handling include `summary.apps` with
-`host: true`. Current runs omit this field for the default `host: false`; older
-result files may also lack it. Apps assertions activate collection independently
-of this setting. `assertionResults.apps` uses the normal `passed`, `reason`, and
+The resolved agent's Apps configuration is saved in `summary.agent.apps`, including
+an explicit `host: false`. The field is omitted when no Apps setting is configured
+for the agent. Earlier results may store it at `summary.apps` instead. Apps
+assertions activate collection independently of this setting.
+`assertionResults.apps` uses the normal `passed`, `reason`, and
 `details` fields. This category participates in existing assertion counts, result
 verification, summaries, and JUnit failures.
 
