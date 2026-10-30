@@ -109,6 +109,7 @@ type ResourceAssertion = assertion.ResourceAssertion
 type PromptAssertion = assertion.PromptAssertion
 type CallOrderAssertion = assertion.CallOrderAssertion
 type SkillAssertion = assertion.SkillAssertion
+type AppAssertion = assertion.AppAssertion
 
 func Read(data []byte, basePath string) (*EvalSpec, error) {
 	spec := &EvalSpec{}

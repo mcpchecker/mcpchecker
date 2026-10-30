@@ -65,6 +65,10 @@ spec:
         tool: pods_create
 ```
 
+To validate tool-associated HTML UI resources, use
+`spec.assertions.apps`. See [Evaluate MCP Apps](../how-to/mcp-apps.md) for the
+assertion schema, a namespace example, and optional Apps host configuration.
+
 ### Step Format
 
 Each step is a single-key map where the key is the step type and the value is the step configuration:

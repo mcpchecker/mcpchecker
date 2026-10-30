@@ -3,10 +3,15 @@ package assertion
 import (
 	"fmt"
 	"regexp"
+
+	"github.com/mcpchecker/mcpchecker/pkg/mcpapps"
 )
 
 // TODO: add a custom Verify script for another form of assertion
 type TaskAssertions struct {
+	// Apps validates tool-associated HTML UI resources.
+	Apps []AppAssertion `json:"apps,omitempty"`
+
 	// RequirePresent fails assertions whose targeted server or tool is not present.
 	RequirePresent bool `json:"requirePresent,omitempty"`
 
@@ -38,7 +43,7 @@ type TaskAssertions struct {
 
 // IsEmpty reports whether the assertion set contains no configured assertions.
 func (a *TaskAssertions) IsEmpty() bool {
-	return a == nil || (len(a.ToolsUsed) == 0 &&
+	return a == nil || (len(a.Apps) == 0 && len(a.ToolsUsed) == 0 &&
 		len(a.RequireAny) == 0 &&
 		len(a.ToolsNotUsed) == 0 &&
 		a.MinToolCalls == nil &&
@@ -53,10 +58,16 @@ func (a *TaskAssertions) IsEmpty() bool {
 		len(a.SkillsNotLoaded) == 0)
 }
 
-// Validate checks regex selectors shared by task-level and eval-level assertions.
+// Validate checks selectors and UI expectations shared by task-level and eval-level assertions.
 func (a *TaskAssertions) Validate() error {
 	if a == nil {
 		return nil
+	}
+
+	for i, app := range a.Apps {
+		if err := app.Validate(); err != nil {
+			return fmt.Errorf("apps[%d]: %w", i, err)
+		}
 	}
 
 	toolGroups := map[string][]ToolAssertion{
@@ -158,3 +169,6 @@ type CallOrderAssertion struct {
 	Server string `json:"server"`
 	Name   string `json:"name"`
 }
+
+// AppAssertion identifies a tool whose UI resource must be retrievable.
+type AppAssertion = mcpapps.Assertion

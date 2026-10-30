@@ -6,8 +6,10 @@ import (
 	"maps"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/mcpchecker/mcpchecker/pkg/mcpapps"
 	"github.com/mcpchecker/mcpchecker/pkg/mcpclient"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -55,7 +57,7 @@ var _ Server = &server{}
 func NewProxyServerForClient(ctx context.Context, name string, client *mcpclient.Client) (Server, error) {
 	r := NewRecorder(name)
 
-	s, err := createProxyServer(ctx, client.ClientSession, r)
+	s, err := createProxyServer(ctx, name, client.ClientSession, r)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create proxy server for %q: %w", name, err)
 	}
@@ -76,11 +78,12 @@ func NewProxyServerForClient(ctx context.Context, name string, client *mcpclient
 	}, nil
 }
 
-func createProxyServer(ctx context.Context, cs *mcp.ClientSession, r Recorder) (*mcp.Server, error) {
+func createProxyServer(ctx context.Context, name string, cs *mcp.ClientSession, r Recorder) (*mcp.Server, error) {
 	serverCaps := cs.InitializeResult().Capabilities
 	opts := &mcp.ServerOptions{
 		Instructions: cs.InitializeResult().Instructions,
 		Capabilities: &mcp.ServerCapabilities{
+			// Upstream extensions may require handlers the proxy does not implement.
 			Prompts:   serverCaps.Prompts,
 			Resources: serverCaps.Resources,
 			Tools:     serverCaps.Tools,
@@ -90,6 +93,9 @@ func createProxyServer(ctx context.Context, cs *mcp.ClientSession, r Recorder) (
 		cs.InitializeResult().ServerInfo,
 		opts,
 	)
+
+	appsHost := mcpapps.HostEnabled(ctx)
+	collector := mcpapps.FromContext(ctx)
 
 	if opts.Capabilities.Prompts != nil {
 		for p, err := range cs.Prompts(ctx, &mcp.ListPromptsParams{}) {
@@ -142,7 +148,18 @@ func createProxyServer(ctx context.Context, cs *mcp.ClientSession, r Recorder) (
 			if err != nil {
 				return nil, fmt.Errorf("failed to list tools: %w", err)
 			}
+			if appsHost && !mcpapps.ModelVisible(t) {
+				continue
+			}
 			s.AddTool(t, func(ctx context.Context, ctr *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				if collector != nil {
+					callCtx, done, ok := collector.BeginCall(ctx, name, t.Name)
+					if !ok {
+						return nil, fmt.Errorf("Apps validation has finished for this task")
+					}
+					ctx = callCtx
+					defer done()
+				}
 				start := time.Now()
 				res, err := cs.CallTool(ctx, &mcp.CallToolParams{
 					Meta:      upstreamMeta(ctr.Params.Meta),
@@ -150,12 +167,89 @@ func createProxyServer(ctx context.Context, cs *mcp.ClientSession, r Recorder) (
 					Arguments: ctr.Params.Arguments,
 				})
 				r.RecordToolCall(ctr, res, err, start)
+				if collector != nil {
+					collector.Observe(ctx, name, t, res, err, func(ctx context.Context, params *mcp.ReadResourceParams, appCallID string) (*mcp.ReadResourceResult, error) {
+						start := time.Now()
+						upstreamParams := *params
+						upstreamParams.Meta = upstreamMeta(params.Meta)
+						resource, readErr := cs.ReadResource(ctx, &upstreamParams)
+						r.RecordHostUIRead(appCallID, &mcp.ReadResourceRequest{Params: params}, resource, readErr, start)
+						return resource, readErr
+					})
+				}
+				if appsHost && res != nil {
+					// Remove UI metadata without changing unrelated metadata or the recording.
+					copyResult := *res
+					copyResult.Meta = withoutUIMetadata(res.Meta)
+					copyResult.Content = withoutUIContentMetadata(res.Content)
+					res = &copyResult
+				}
 				return res, err
 			})
 		}
 	}
 
 	return s, nil
+}
+
+func withoutUIMetadata(meta mcp.Meta) mcp.Meta {
+	copyMeta := maps.Clone(meta)
+	for key := range copyMeta {
+		if key == "ui" || strings.HasPrefix(key, "ui/") {
+			delete(copyMeta, key)
+		}
+	}
+	return copyMeta
+}
+
+// Copy each block and every metadata map we filter. Payloads and annotations
+// remain shared because they are not modified.
+func withoutUIContentMetadata(content []mcp.Content) []mcp.Content {
+	if content == nil {
+		return nil
+	}
+	out := make([]mcp.Content, len(content))
+	for i, block := range content {
+		switch block := block.(type) {
+		case *mcp.TextContent:
+			copyBlock := *block
+			copyBlock.Meta = withoutUIMetadata(block.Meta)
+			out[i] = &copyBlock
+		case *mcp.ImageContent:
+			copyBlock := *block
+			copyBlock.Meta = withoutUIMetadata(block.Meta)
+			out[i] = &copyBlock
+		case *mcp.AudioContent:
+			copyBlock := *block
+			copyBlock.Meta = withoutUIMetadata(block.Meta)
+			out[i] = &copyBlock
+		case *mcp.ResourceLink:
+			copyBlock := *block
+			copyBlock.Meta = withoutUIMetadata(block.Meta)
+			out[i] = &copyBlock
+		case *mcp.EmbeddedResource:
+			copyBlock := *block
+			copyBlock.Meta = withoutUIMetadata(block.Meta)
+			if block.Resource != nil {
+				resource := *block.Resource
+				resource.Meta = withoutUIMetadata(resource.Meta)
+				copyBlock.Resource = &resource
+			}
+			out[i] = &copyBlock
+		case *mcp.ToolUseContent:
+			copyBlock := *block
+			copyBlock.Meta = withoutUIMetadata(block.Meta)
+			out[i] = &copyBlock
+		case *mcp.ToolResultContent:
+			copyBlock := *block
+			copyBlock.Meta = withoutUIMetadata(block.Meta)
+			copyBlock.Content = withoutUIContentMetadata(block.Content)
+			out[i] = &copyBlock
+		default:
+			out[i] = block
+		}
+	}
+	return out
 }
 
 // hopMetaKeys are the per-request _meta keys that describe the connection
@@ -167,6 +261,7 @@ var hopMetaKeys = []string{
 	mcp.MetaKeyProtocolVersion,
 	mcp.MetaKeyClientInfo,
 	mcp.MetaKeyClientCapabilities,
+	"mcpchecker/host-ui-read", // Legacy marker: discard it, but never trust it for recording.
 }
 
 // upstreamMeta returns a copy of the agent's request _meta without the keys
@@ -227,7 +322,8 @@ func (s *server) Run(ctx context.Context) error {
 	close(s.ready)
 
 	httpServer := &http.Server{
-		Handler: mux,
+		Handler:     mux,
+		BaseContext: func(net.Listener) context.Context { return ctx },
 	}
 
 	// Run server in a goroutine

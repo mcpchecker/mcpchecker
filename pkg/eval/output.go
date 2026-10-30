@@ -1,11 +1,15 @@
 package eval
 
-import "net/url"
+import (
+	"net/url"
+
+	"github.com/mcpchecker/mcpchecker/pkg/mcpapps"
+)
 
 // EvalOutput wraps evaluation results with configuration summary metadata.
 // This is the top-level structure written to the JSON output file.
 type EvalOutput struct {
-	Summary *EvalSummary `json:"summary"`
+	Summary *EvalSummary  `json:"summary"`
 	Results []*EvalResult `json:"results"`
 }
 
@@ -29,11 +33,12 @@ type SkillSummary struct {
 
 // AgentSummary describes the agent configuration.
 type AgentSummary struct {
-	Type    string `json:"type"`
-	Name    string `json:"name,omitempty"`
-	Model   string `json:"model,omitempty"`
-	Path    string `json:"path,omitempty"`
-	Command string `json:"command,omitempty"`
+	Apps    *mcpapps.Config `json:"apps,omitempty"`
+	Type    string          `json:"type"`
+	Name    string          `json:"name,omitempty"`
+	Model   string          `json:"model,omitempty"`
+	Path    string          `json:"path,omitempty"`
+	Command string          `json:"command,omitempty"`
 }
 
 // JudgeSummary describes the LLM judge configuration.

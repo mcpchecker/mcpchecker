@@ -25,6 +25,12 @@ config:
 
 Use a separate file when you need custom commands or want to reuse the same agent across multiple evals.
 
+Apps host handling is an agent-specific option: set `config.agent.apps.host: true`
+inline, or top-level `apps.host: true` in an Agent file. An inline `apps` setting
+overrides the file's setting. It defaults to disabled and is independent of Apps
+assertions. See [Evaluate MCP Apps resources](mcp-apps.md) for the behavior and
+limitations, including clients with native Apps support.
+
 ## Built-in Agent Types
 
 ### Claude Code

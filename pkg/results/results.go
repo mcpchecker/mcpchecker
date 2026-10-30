@@ -155,6 +155,9 @@ func FailureReason(r *eval.EvalResult) string {
 		return ""
 	}
 	a := r.AssertionResults
+	if a.Apps != nil && !a.Apps.Passed {
+		return a.Apps.Reason
+	}
 	if a.ToolsUsed != nil && !a.ToolsUsed.Passed {
 		return a.ToolsUsed.Reason
 	}
@@ -204,6 +207,7 @@ func CollectFailedAssertions(results *eval.CompositeAssertionResult) []string {
 		}
 	}
 
+	addFailure("Apps", results.Apps)
 	addFailure("ToolsUsed", results.ToolsUsed)
 	addFailure("RequireAny", results.RequireAny)
 	addFailure("ToolsNotUsed", results.ToolsNotUsed)
