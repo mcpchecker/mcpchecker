@@ -49,6 +49,9 @@ type ServerConfig struct {
 	// Used for http servers. Values may contain environment variable references
 	Headers map[string]string `json:"headers,omitempty"`
 
+	// Auth configures OAuth client credentials for HTTP servers.
+	Auth *AuthConfig `json:"auth,omitempty" yaml:"auth,omitempty"`
+
 	// Disabled indicates whether this server should be skipped
 	Disabled bool `json:"disabled,omitempty"`
 
@@ -57,6 +60,18 @@ type ServerConfig struct {
 
 	// EnableAllTools sets all tools to be allowed
 	EnableAllTools bool `json:"enableAllTools"`
+}
+
+// AuthConfig holds OAuth client-credentials settings for HTTP MCP servers.
+// Field values may use ${ENV} or ${ENV:-default} expansion.
+type AuthConfig struct {
+	Type         string `json:"type,omitempty" yaml:"type,omitempty"`
+	TokenURL     string `json:"tokenUrl,omitempty" yaml:"tokenUrl,omitempty"`
+	ClientID     string `json:"clientId,omitempty" yaml:"clientId,omitempty"`
+	ClientSecret string `json:"clientSecret,omitempty" yaml:"clientSecret,omitempty"`
+	Scope        string `json:"scope,omitempty" yaml:"scope,omitempty"`
+	// Resource is the RFC 8707 resource indicator. Empty means the server URL.
+	Resource string `json:"resource,omitempty" yaml:"resource,omitempty"`
 }
 
 // ParseConfigFile reads and parses an MCP config file from the given path.
@@ -84,6 +99,10 @@ func ParseConfig(data []byte) (*MCPConfig, error) {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
 
+	if err := config.Resolve(); err != nil {
+		return nil, fmt.Errorf("invalid config: %w", err)
+	}
+
 	return &config, nil
 }
 
@@ -94,6 +113,14 @@ func validateConfig(config *MCPConfig) error {
 	}
 
 	for name, server := range config.MCPServers {
+		if server.Auth != nil {
+			if !server.IsHttp() {
+				return fmt.Errorf("server %q: auth is only supported for http servers", name)
+			}
+			if server.Auth.Type != "client_credentials" {
+				return fmt.Errorf("server %q: unsupported auth type %q", name, server.Auth.Type)
+			}
+		}
 		if server.IsHttp() {
 			if server.URL == "" {
 				return fmt.Errorf("server %q: url is required for http servers", name)

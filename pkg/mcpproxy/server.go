@@ -259,17 +259,18 @@ func (s *server) GetConfig() (*mcpclient.ServerConfig, error) {
 		return nil, fmt.Errorf("url must be set for config to be valid, ensure Run() is called before GetConfig()")
 	}
 
-	cfg := &mcpclient.ServerConfig{
+	// Intentionally no headers: this config describes how to reach the local
+	// proxy, not the upstream MCP server. The proxy's mcpclient already holds
+	// whatever headers/OAuth credentials are needed to talk to the upstream
+	// server and attaches them itself. The local proxy listener is
+	// unauthenticated and does not consume any headers from the agent, so
+	// forwarding the upstream server's headers here would needlessly expose
+	// its credentials (static Authorization/API-key headers, etc.) to the
+	// agent.
+	return &mcpclient.ServerConfig{
 		Type: mcpclient.TransportTypeHttp,
 		URL:  s.url,
-	}
-
-	clientCfg := s.proxyClient.GetConfig()
-	if clientCfg != nil {
-		cfg.Headers = clientCfg.Headers
-	}
-
-	return cfg, nil
+	}, nil
 }
 
 func (s *server) GetName() string {
