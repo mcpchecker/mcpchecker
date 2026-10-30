@@ -60,6 +60,9 @@ type ServerConfig struct {
 
 	// EnableAllTools sets all tools to be allowed
 	EnableAllTools bool `json:"enableAllTools"`
+
+	// resolved prevents re-expanding literal ${...} text in resolved values.
+	resolved bool
 }
 
 // AuthConfig holds OAuth client-credentials settings for HTTP MCP servers.

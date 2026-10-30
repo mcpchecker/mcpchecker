@@ -22,6 +22,7 @@ func TestExpandEnv(t *testing.T) {
 
 func TestResolveExpandsOnce(t *testing.T) {
 	t.Setenv("SECRET", "has ${NOT_A_VAR} inside")
+	t.Setenv("NOT_A_VAR", "must not be expanded")
 	cfg := &ServerConfig{
 		Type: TransportTypeHttp,
 		URL:  "http://example.com/mcp",
@@ -35,6 +36,11 @@ func TestResolveExpandsOnce(t *testing.T) {
 	require.NoError(t, cfg.Resolve())
 	require.NoError(t, cfg.Resolve())
 	assert.Equal(t, "has ${NOT_A_VAR} inside", cfg.Auth.ClientSecret)
+
+	// Copies carry resolved values and must carry their resolution state too.
+	copied := *cfg
+	require.NoError(t, copied.Resolve())
+	assert.Equal(t, "has ${NOT_A_VAR} inside", copied.Auth.ClientSecret)
 }
 
 func TestParseConfigResolvesAuthEnv(t *testing.T) {
