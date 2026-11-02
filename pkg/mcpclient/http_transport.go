@@ -108,8 +108,12 @@ func NewHTTPClient(cfg *ServerConfig) (*http.Client, error) {
 // disallowCrossOriginRedirects implements http.Client.CheckRedirect. It
 // rejects any redirect whose scheme, host, or port differs from the first
 // request in the chain (i.e. the configured MCP server URL), including an
-// https -> http downgrade on the same host.
+// https -> http downgrade on the same host. It also preserves http.Client's
+// default limit of ten redirects.
 func disallowCrossOriginRedirects(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return fmt.Errorf("stopped after 10 redirects")
+	}
 	if len(via) == 0 {
 		return nil
 	}
