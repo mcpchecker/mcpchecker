@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mcpchecker/mcpchecker/pkg/mcpapps"
 	"github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -12,6 +13,7 @@ import (
 type Recorder interface {
 	RecordToolCall(req *mcp.CallToolRequest, res *mcp.CallToolResult, err error, start time.Time)
 	RecordResourceRead(req *mcp.ReadResourceRequest, res *mcp.ReadResourceResult, err error, start time.Time)
+	RecordHostUIRead(appCallID string, req *mcp.ReadResourceRequest, res *mcp.ReadResourceResult, err error, start time.Time)
 	RecordPromptGet(req *mcp.GetPromptRequest, res *mcp.GetPromptResult, err error, start time.Time)
 	GetHistory() CallHistory
 }
@@ -92,6 +94,10 @@ func (c *ToolCall) MarshalJSON() ([]byte, error) {
 
 // ResourceRead records a resource read
 type ResourceRead struct {
+	HostUIRead bool   `json:"hostUiRead,omitempty"`
+	AppCallID  string `json:"appCallId,omitempty"`
+	MIMEType   string `json:"mimeType,omitempty"`
+	SizeBytes  int    `json:"sizeBytes,omitempty"`
 	CallRecord
 	URI     string                   `json:"uri"` // this is copied to the top level struct for convenience
 	Request *mcp.ReadResourceRequest `json:"request"`
@@ -177,15 +183,42 @@ func (r *recorder) RecordToolCall(req *mcp.CallToolRequest, res *mcp.CallToolRes
 }
 
 func (r *recorder) RecordResourceRead(req *mcp.ReadResourceRequest, res *mcp.ReadResourceResult, err error, start time.Time) {
+	r.recordResourceRead(req, res, err, start, "")
+}
+
+// RecordHostUIRead is used only by the proxy's Apps collector, never by
+// agent-facing resource handlers. The invocation ID is not taken from MCP metadata.
+func (r *recorder) RecordHostUIRead(appCallID string, req *mcp.ReadResourceRequest, res *mcp.ReadResourceResult, err error, start time.Time) {
+	r.recordResourceRead(req, res, err, start, appCallID)
+}
+
+func (r *recorder) recordResourceRead(req *mcp.ReadResourceRequest, res *mcp.ReadResourceResult, err error, start time.Time, hostID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	mimeType := ""
+	size := 0
+	errorText := errorToString(err)
+	if hostID != "" {
+		if res != nil {
+			for _, content := range res.Contents {
+				if content != nil {
+					mimeType = content.MIMEType
+					size += len(content.Text) + len(content.Blob)
+				}
+			}
+		}
+		// Keep host HTML out of both the in-memory recorder and serialized output.
+		res = nil
+		errorText = mcpapps.ErrorDetail(err)
+	}
 	r.history.ResourceReads = append(r.history.ResourceReads, &ResourceRead{
+		HostUIRead: hostID != "", AppCallID: hostID, MIMEType: mimeType, SizeBytes: size,
 		CallRecord: CallRecord{
 			ServerName: r.serverName,
 			Timestamp:  start,
 			Success:    err == nil,
-			Error:      errorToString(err),
+			Error:      errorText,
 		},
 		URI:     req.Params.URI,
 		Request: req,

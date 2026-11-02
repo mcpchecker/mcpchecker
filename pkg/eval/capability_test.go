@@ -56,6 +56,49 @@ func TestResolveCapabilitiesToolPresence(t *testing.T) {
 	}
 }
 
+func TestResolveCapabilitiesAppsPresence(t *testing.T) {
+	app := AppAssertion{Server: "s", Tool: "view"}
+	for _, test := range []struct {
+		name      string
+		inventory CapabilityInventory
+		reason    string
+	}{
+		{"present", CapabilityInventory{"s": {"view"}}, ""},
+		{"tool absent", CapabilityInventory{"s": {"other"}}, "tool not present"},
+		{"server absent", CapabilityInventory{}, "server not present"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			for _, requirePresent := range []bool{false, true} {
+				configured := TaskAssertions{Apps: []AppAssertion{app}, RequirePresent: requirePresent}
+				resolved := ResolveCapabilities(configured, test.inventory)
+				assert.Equal(t, []AppAssertion{app}, configured.Apps, "resolution must not modify configured assertions")
+				result := &CompositeAssertionResult{Apps: evaluateApps(resolved.Assertions.Apps, nil), SkippedAssertions: resolved.SkippedAssertions, PresenceFailures: resolved.PresenceFailures}
+				if test.reason == "" {
+					assert.Equal(t, []AppAssertion{app}, resolved.Assertions.Apps)
+					assert.Empty(t, resolved.SkippedAssertions)
+					assert.Empty(t, resolved.PresenceFailures)
+					assert.Contains(t, result.Apps.Reason, "tool_not_invoked")
+					continue
+				}
+				assert.Empty(t, resolved.Assertions.Apps)
+				assert.Nil(t, result.Apps, "absent targets must not produce tool_not_invoked")
+				record := []AssertionPresenceResult{{Type: assertionTypeApps, Server: app.Server, Target: app.Tool, Reason: test.reason}}
+				if requirePresent {
+					assert.Equal(t, record, resolved.PresenceFailures)
+					assert.Empty(t, resolved.SkippedAssertions)
+					assert.False(t, result.Succeeded())
+					assert.Equal(t, 1, result.TotalAssertions())
+				} else {
+					assert.Equal(t, record, resolved.SkippedAssertions)
+					assert.Empty(t, resolved.PresenceFailures)
+					assert.True(t, result.Succeeded())
+					assert.Zero(t, result.TotalAssertions())
+				}
+			}
+		})
+	}
+}
+
 func TestResolveCapabilitiesToolsNotUsedMissingTargetRequirePresent(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -97,21 +140,21 @@ func TestResolveCapabilitiesRequireAny(t *testing.T) {
 		wantMissing   bool
 	}{
 		{
-			name: "all present",
-			candidates: []ToolAssertion{{Server: "s", Tool: "one"}, {Server: "s", Tool: "two"}},
-			inventory: CapabilityInventory{"s": {"one", "two"}},
+			name:          "all present",
+			candidates:    []ToolAssertion{{Server: "s", Tool: "one"}, {Server: "s", Tool: "two"}},
+			inventory:     CapabilityInventory{"s": {"one", "two"}},
 			wantRemaining: []ToolAssertion{{Server: "s", Tool: "one"}, {Server: "s", Tool: "two"}},
 		},
 		{
-			name: "some present removes absent candidates",
-			candidates: []ToolAssertion{{Server: "s", Tool: "one"}, {Server: "s", Tool: "two"}},
-			inventory: CapabilityInventory{"s": {"one"}},
+			name:          "some present removes absent candidates",
+			candidates:    []ToolAssertion{{Server: "s", Tool: "one"}, {Server: "s", Tool: "two"}},
+			inventory:     CapabilityInventory{"s": {"one"}},
 			wantRemaining: []ToolAssertion{{Server: "s", Tool: "one"}},
 		},
 		{
-			name: "none present",
-			candidates: []ToolAssertion{{Server: "s", Tool: "one"}, {Server: "other", Tool: "two"}},
-			inventory: CapabilityInventory{"s": {"visible"}},
+			name:        "none present",
+			candidates:  []ToolAssertion{{Server: "s", Tool: "one"}, {Server: "other", Tool: "two"}},
+			inventory:   CapabilityInventory{"s": {"visible"}},
 			wantMissing: true,
 		},
 	}
@@ -181,11 +224,11 @@ func TestResolveCapabilitiesResourcesAndPromptsRequirePresent(t *testing.T) {
 	for _, requirePresent := range []bool{false, true} {
 		t.Run(map[bool]string{false: "skip", true: "fail"}[requirePresent], func(t *testing.T) {
 			assertions := TaskAssertions{
-				RequirePresent:    requirePresent,
-				ResourcesRead:     []ResourceAssertion{{Server: "resource-read", URI: "r1"}},
-				ResourcesNotRead:  []ResourceAssertion{{Server: "resource-not-read", URI: "r2"}},
-				PromptsUsed:       []PromptAssertion{{Server: "prompt-used", Prompt: "p1"}},
-				PromptsNotUsed:    []PromptAssertion{{Server: "prompt-not-used", Prompt: "p2"}},
+				RequirePresent:   requirePresent,
+				ResourcesRead:    []ResourceAssertion{{Server: "resource-read", URI: "r1"}},
+				ResourcesNotRead: []ResourceAssertion{{Server: "resource-not-read", URI: "r2"}},
+				PromptsUsed:      []PromptAssertion{{Server: "prompt-used", Prompt: "p1"}},
+				PromptsNotUsed:   []PromptAssertion{{Server: "prompt-not-used", Prompt: "p2"}},
 			}
 			result := ResolveCapabilities(assertions, CapabilityInventory{})
 			assert.Empty(t, result.Assertions.ResourcesRead)

@@ -1,0 +1,12 @@
+kind: Task
+apiVersion: mcpchecker/v1alpha2
+metadata:
+  name: namespaces-ui
+spec:
+  prompt:
+    inline: Call namespaces_list to list the namespaces.
+  assertions:
+    requirePresent: true
+    apps:
+      - server: kubernetes
+        tool: namespaces_list

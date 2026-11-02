@@ -55,6 +55,9 @@ func loadBuiltin(builtinType, builtinModel string) (*AgentSpec, error) {
 // mergeAgentSpecs merges two agent specs, with overrides taking precedence over defaults
 func mergeAgentSpecs(defaults, overrides *AgentSpec) *AgentSpec {
 	result := *defaults
+	if overrides.Apps != nil {
+		result.Apps = overrides.Apps
+	}
 
 	// Override metadata if specified
 	if overrides.Metadata.Name != "" {

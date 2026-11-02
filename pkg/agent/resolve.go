@@ -34,6 +34,9 @@ func ResolveAgentRef(ref *AgentRef) (*AgentSpec, error) {
 	if agentSpec.Builtin != nil && ref.UseResponsesAPI != nil {
 		agentSpec.Builtin.UseResponsesAPI = ref.UseResponsesAPI
 	}
+	if ref.Apps != nil {
+		agentSpec.Apps = ref.Apps
+	}
 
 	return agentSpec, nil
 }

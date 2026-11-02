@@ -1,0 +1,7 @@
+mcpServers:
+  kubernetes:
+    type: http
+    # Point this at your running MCP server with Apps enabled.
+    url: http://localhost:8080/mcp
+    alwaysAllow:
+      - namespaces_list
