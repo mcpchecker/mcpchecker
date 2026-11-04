@@ -116,6 +116,26 @@ config:
     path: agent-acp.yaml
 ```
 
+### GitHub Copilot CLI
+
+GitHub Copilot CLI works as an agent in ACP mode (`copilot --acp`):
+
+**Prerequisite:** Install the [GitHub Copilot CLI](https://github.com/github/copilot-cli) and authenticate so that `copilot` is available on your PATH.
+
+```yaml
+kind: Agent
+metadata:
+  name: "copilot-cli"
+acp:
+  cmd: "copilot"
+  args:
+    - "--acp"
+    - "--model"
+    - "<model-id>"
+```
+
+Use mcpchecker v0.0.21 or later. Copilot CLI negotiates MCP protocol version `2026-07-28`, which the recording proxy rejected in earlier releases, leaving the agent with no tools (#345).
+
 ## Custom Agent Configuration
 
 For agents not covered by the built-in types, specify the `commands` section directly:
