@@ -206,8 +206,10 @@ Use `assertions.apps` with any agent using the recording proxy to check that
 invoked tools provide retrievable, nonempty HTML UI resources with the MCP Apps
 MIME type. Assertions activate collection automatically. Separately, opt into
 Apps protocol handling for an agent with `config.agent.apps.host: true` to
-advertise UI support, hide app-only tools, and filter UI metadata from results
-and their content blocks.
+advertise UI support upstream and hide app-only tools. The proxy preserves UI
+metadata and forwards the server's Apps declaration and UI resource reads with
+either host setting.
+The built-in LLM agent excludes UI metadata from its model-facing tool results.
 No browser is required. This does not render the app or validate its elements or
 displayed data. See [Evaluate MCP Apps resources](mcp-apps.md)
 for configuration and a namespace example. Missing servers or model-visible tools

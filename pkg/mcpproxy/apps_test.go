@@ -17,7 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Covers negotiation, an unlisted UI resource, metadata separation, and
+// Covers negotiation, an unlisted UI resource, metadata preservation, and
 // redacted recording with a plain MCP client that has no Apps support.
 func TestMCPApps(t *testing.T) {
 	collector := mcpapps.NewCollector([]mcpapps.Assertion{{Server: "kubernetes", Tool: "namespaces_list"}})
@@ -32,36 +32,11 @@ func TestMCPApps(t *testing.T) {
 		&mcp.AudioContent{MIMEType: "audio/wav", Data: []byte("audio"), Meta: contentMeta},
 		&mcp.ResourceLink{URI: "test://static", Name: "static", Meta: contentMeta},
 		&mcp.EmbeddedResource{Resource: &mcp.ResourceContents{URI: "test://embedded", Text: "embedded data", Meta: contentMeta}, Meta: contentMeta},
-		&mcp.ToolUseContent{ID: "nested-call", Name: "view", Meta: contentMeta},
-		&mcp.ToolResultContent{ToolUseID: "nested-call", Content: []mcp.Content{&mcp.TextContent{Text: "nested data", Meta: contentMeta}}, Meta: contentMeta},
 	}
-	// Compare complete content to catch payload loss as well as filtering or mutation.
-	checkContent := func(t *testing.T, got []mcp.Content, filtered bool) {
+	// Compare complete content to catch metadata or payload loss.
+	checkContent := func(t *testing.T, got []mcp.Content) {
 		t.Helper()
-		original, err := json.Marshal(content)
-		require.NoError(t, err)
-		var expected any
-		require.NoError(t, json.Unmarshal(original, &expected))
-		if filtered {
-			var clean func(any)
-			clean = func(value any) {
-				switch value := value.(type) {
-				case []any:
-					for _, item := range value {
-						clean(item)
-					}
-				case map[string]any:
-					if _, ok := value["_meta"]; ok {
-						value["_meta"] = map[string]any{"example.com/trace": "content-trace"}
-					}
-					for _, item := range value {
-						clean(item)
-					}
-				}
-			}
-			clean(expected)
-		}
-		want, err := json.Marshal(expected)
+		want, err := json.Marshal(content)
 		require.NoError(t, err)
 		actual, err := json.Marshal(got)
 		require.NoError(t, err)
@@ -71,16 +46,17 @@ func TestMCPApps(t *testing.T) {
 	var negotiated atomic.Bool
 	upstream := mcp.NewServer(&mcp.Implementation{Name: "fixture", Version: "1"}, &mcp.ServerOptions{Capabilities: &mcp.ServerCapabilities{
 		Resources:  &mcp.ResourceCapabilities{},
-		Extensions: map[string]any{"example.com/custom": map[string]any{}},
+		Extensions: map[string]any{"example.com/custom": map[string]any{}, "io.modelcontextprotocol/ui": map[string]any{}},
 	}})
 	upstream.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
 		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
 			if method == "tools/list" {
 				caps := req.(*mcp.ListToolsRequest).ClientCapabilities()
 				if caps != nil {
-					assert.NotNil(t, caps.RootsV2, "Apps must preserve the SDK's default roots capability")
-					if caps.RootsV2 != nil {
-						assert.True(t, caps.RootsV2.ListChanged)
+					roots := caps.RootsV2 //nolint:staticcheck // Verify that Apps negotiation preserves the SDK's default roots capability (SA1019).
+					assert.NotNil(t, roots, "Apps must preserve the SDK's default roots capability")
+					if roots != nil {
+						assert.True(t, roots.ListChanged)
 					}
 					_, ok := caps.Extensions["io.modelcontextprotocol/ui"]
 					negotiated.Store(ok)
@@ -115,30 +91,30 @@ func TestMCPApps(t *testing.T) {
 	defer httpServer.Close()
 	client, err := mcpclient.Connect(ctx, &mcpclient.ServerConfig{Type: mcpclient.TransportTypeHttp, URL: httpServer.URL, EnableAllTools: true})
 	require.NoError(t, err)
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	proxy, err := mcpproxy.NewProxyServerForClient(ctx, "kubernetes", client)
 	require.NoError(t, err)
 	go func() { _ = proxy.Run(ctx) }()
 	require.NoError(t, proxy.WaitReady(ctx))
 	require.True(t, negotiated.Load(), "upstream discovery must see Apps capability")
-	defer proxy.Close()
+	defer func() { _ = proxy.Close() }()
 	config, err := proxy.GetConfig()
 	require.NoError(t, err)
 	// No UI extension or collector is supplied to the agent client.
 	agent, err := mcp.NewClient(&mcp.Implementation{Name: "plain-agent", Version: "1"}, nil).Connect(ctx, &mcp.StreamableClientTransport{Endpoint: config.URL}, nil)
 	require.NoError(t, err)
-	defer agent.Close()
-	require.Empty(t, agent.InitializeResult().Capabilities.Extensions, "the proxy must not advertise unimplemented upstream extensions")
+	defer func() { _ = agent.Close() }()
+	require.Equal(t, map[string]any{"io.modelcontextprotocol/ui": map[string]any{}}, agent.InitializeResult().Capabilities.Extensions, "only the supported UI extension must be forwarded")
 	tools, err := agent.ListTools(ctx, nil)
 	require.NoError(t, err)
 	require.Len(t, tools.Tools, 1, "app-only tools must not be offered to the model")
 	result, err := agent.CallTool(ctx, &mcp.CallToolParams{Name: "namespaces_list", Arguments: map[string]any{"cluster": "test"}})
 	require.NoError(t, err)
-	require.NotContains(t, result.Meta, "ui")
-	require.NotContains(t, result.Meta, "ui/legacy")
+	require.Equal(t, resultURI, result.Meta["ui"].(map[string]any)["resourceUri"])
+	require.Equal(t, "for-the-ui", result.Meta["ui/legacy"])
 	require.Equal(t, "server-trace", result.Meta["example.com/trace"])
 	require.Equal(t, "progress-1", result.Meta["progressToken"])
-	checkContent(t, result.Content, true)
+	checkContent(t, result.Content)
 	visible, err := json.Marshal(result)
 	require.NoError(t, err)
 	require.NotContains(t, string(visible), "<html>")
@@ -151,8 +127,8 @@ func TestMCPApps(t *testing.T) {
 	require.EqualValues(t, 1, reads.Load())
 	history := proxy.GetCallHistory()
 	require.Len(t, history.ToolCalls, 1)
-	require.Equal(t, "for-the-ui", history.ToolCalls[0].Result.Meta["ui/legacy"], "filtering must not mutate recorded metadata")
-	checkContent(t, history.ToolCalls[0].Result.Content, false)
+	require.Equal(t, "for-the-ui", history.ToolCalls[0].Result.Meta["ui/legacy"], "recording must retain UI metadata")
+	checkContent(t, history.ToolCalls[0].Result.Content)
 	require.Len(t, history.ResourceReads, 1)
 	read := history.ResourceReads[0]
 	require.True(t, read.HostUIRead)
@@ -165,13 +141,18 @@ func TestMCPApps(t *testing.T) {
 	require.Empty(t, mcpproxy.ComputeCallHistoryTokens(&history))
 	require.Nil(t, read.Tokens)
 
-	// Agent-supplied metadata cannot hide reads through either resource handler.
-	for _, agentURI := range []string{"test://static", "test://items/42"} {
-		_, err := agent.ReadResource(ctx, &mcp.ReadResourceParams{URI: agentURI, Meta: mcp.Meta{"mcpchecker/host-ui-read": "spoofed"}})
+	// Client resource reads, including UI reads, remain ordinary activity.
+	for _, agentURI := range []string{"test://static", "test://items/42", resultURI} {
+		resource, err := agent.ReadResource(ctx, &mcp.ReadResourceParams{URI: agentURI, Meta: mcp.Meta{"mcpchecker/host-ui-read": "spoofed"}})
 		require.NoError(t, err)
+		if agentURI == resultURI {
+			require.Len(t, resource.Contents, 1)
+			require.Equal(t, html, resource.Contents[0].Text)
+			require.Equal(t, mcpapps.MIMEType, resource.Contents[0].MIMEType)
+		}
 	}
 	history = proxy.GetCallHistory()
-	require.Len(t, history.ResourceReads, 3)
+	require.Len(t, history.ResourceReads, 4)
 	require.Empty(t, mcpproxy.ComputeCallHistoryTokens(&history))
 	for _, agentRead := range history.ResourceReads[1:] {
 		require.False(t, agentRead.HostUIRead)
@@ -203,12 +184,12 @@ func TestMCPApps(t *testing.T) {
 			beforeReads := reads.Load()
 			client, err := mcpclient.Connect(ctx, &mcpclient.ServerConfig{Type: mcpclient.TransportTypeHttp, URL: httpServer.URL, EnableAllTools: true})
 			require.NoError(t, err)
-			defer client.Close()
+			defer func() { _ = client.Close() }()
 			proxy, err := mcpproxy.NewProxyServerForClient(ctx, "kubernetes", client)
 			require.NoError(t, err)
 			go func() { _ = proxy.Run(ctx) }()
 			require.NoError(t, proxy.WaitReady(ctx))
-			defer proxy.Close()
+			defer func() { _ = proxy.Close() }()
 			require.Equal(t, mode.host, negotiated.Load())
 			allowed, err := client.GetAllowedTools(ctx)
 			require.NoError(t, err)
@@ -216,8 +197,8 @@ func TestMCPApps(t *testing.T) {
 			require.NoError(t, err)
 			agent, err := mcp.NewClient(&mcp.Implementation{Name: "plain-agent", Version: "1"}, nil).Connect(ctx, &mcp.StreamableClientTransport{Endpoint: config.URL}, nil)
 			require.NoError(t, err)
-			defer agent.Close()
-			require.Empty(t, agent.InitializeResult().Capabilities.Extensions)
+			defer func() { _ = agent.Close() }()
+			require.Equal(t, map[string]any{"io.modelcontextprotocol/ui": map[string]any{}}, agent.InitializeResult().Capabilities.Extensions)
 			tools, err := agent.ListTools(ctx, nil)
 			require.NoError(t, err)
 			wantTools := 2
@@ -230,11 +211,11 @@ func TestMCPApps(t *testing.T) {
 			require.NoError(t, err)
 			_, hasUI := result.Meta["ui"]
 			_, hasLegacyUI := result.Meta["ui/legacy"]
-			require.Equal(t, !mode.host, hasUI)
-			require.Equal(t, !mode.host, hasLegacyUI)
+			require.True(t, hasUI)
+			require.True(t, hasLegacyUI)
 			require.Equal(t, "server-trace", result.Meta["example.com/trace"])
-			checkContent(t, result.Content, mode.host)
-			checkContent(t, proxy.GetCallHistory().ToolCalls[0].Result.Content, false)
+			checkContent(t, result.Content)
+			checkContent(t, proxy.GetCallHistory().ToolCalls[0].Result.Content)
 			if mode.assertions {
 				observations := collector.Finish()
 				require.Len(t, observations, 1)
@@ -245,6 +226,7 @@ func TestMCPApps(t *testing.T) {
 				require.Equal(t, beforeReads, reads.Load(), "host emulation alone must not read UI resources")
 				require.Empty(t, proxy.GetCallHistory().ResourceReads)
 			}
+
 		})
 	}
 }
@@ -271,17 +253,17 @@ func TestMCPAppsCancellation(t *testing.T) {
 			// Keep the shared upstream connection and agent alive when only the task is canceled.
 			client, err := mcpclient.Connect(t.Context(), &mcpclient.ServerConfig{Type: mcpclient.TransportTypeHttp, URL: httpServer.URL})
 			require.NoError(t, err)
-			defer client.Close()
+			defer func() { _ = client.Close() }()
 			proxy, err := mcpproxy.NewProxyServerForClient(ctx, "fixture", client)
 			require.NoError(t, err)
 			go func() { _ = proxy.Run(ctx) }()
 			require.NoError(t, proxy.WaitReady(ctx))
-			defer proxy.Close()
+			defer func() { _ = proxy.Close() }()
 			config, err := proxy.GetConfig()
 			require.NoError(t, err)
 			agent, err := mcp.NewClient(&mcp.Implementation{Name: "agent", Version: "1"}, nil).Connect(t.Context(), &mcp.StreamableClientTransport{Endpoint: config.URL}, nil)
 			require.NoError(t, err)
-			defer agent.Close()
+			defer func() { _ = agent.Close() }()
 			done := make(chan struct{})
 			go func() {
 				defer close(done)

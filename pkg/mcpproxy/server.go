@@ -83,11 +83,14 @@ func createProxyServer(ctx context.Context, name string, cs *mcp.ClientSession, 
 	opts := &mcp.ServerOptions{
 		Instructions: cs.InitializeResult().Instructions,
 		Capabilities: &mcp.ServerCapabilities{
-			// Upstream extensions may require handlers the proxy does not implement.
 			Prompts:   serverCaps.Prompts,
 			Resources: serverCaps.Resources,
 			Tools:     serverCaps.Tools,
 		},
+	}
+	// Only forward extensions whose server-side behavior the proxy supports.
+	if ui, ok := serverCaps.Extensions["io.modelcontextprotocol/ui"]; ok {
+		opts.Capabilities.Extensions = map[string]any{"io.modelcontextprotocol/ui": ui}
 	}
 	s := mcp.NewServer(
 		cs.InitializeResult().ServerInfo,
@@ -96,6 +99,25 @@ func createProxyServer(ctx context.Context, name string, cs *mcp.ClientSession, 
 
 	appsHost := mcpapps.HostEnabled(ctx)
 	collector := mcpapps.FromContext(ctx)
+
+	// Apps resources may be absent from resources/list and resource templates.
+	// Forward their reads directly, leaving resource lookup to the upstream server.
+	s.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			if method == "resources/read" {
+				rrr := req.(*mcp.ReadResourceRequest)
+				if rrr.Params != nil && strings.HasPrefix(rrr.Params.URI, "ui://") {
+					start := time.Now()
+					params := *rrr.Params
+					params.Meta = upstreamMeta(params.Meta)
+					res, err := cs.ReadResource(ctx, &params)
+					r.RecordResourceRead(rrr, res, err, start)
+					return res, err
+				}
+			}
+			return next(ctx, method, req)
+		}
+	})
 
 	if opts.Capabilities.Prompts != nil {
 		for p, err := range cs.Prompts(ctx, &mcp.ListPromptsParams{}) {
@@ -155,7 +177,7 @@ func createProxyServer(ctx context.Context, name string, cs *mcp.ClientSession, 
 				if collector != nil {
 					callCtx, done, ok := collector.BeginCall(ctx, name, t.Name)
 					if !ok {
-						return nil, fmt.Errorf("Apps validation has finished for this task")
+						return nil, fmt.Errorf("apps validation has finished for this task")
 					}
 					ctx = callCtx
 					defer done()
@@ -177,79 +199,12 @@ func createProxyServer(ctx context.Context, name string, cs *mcp.ClientSession, 
 						return resource, readErr
 					})
 				}
-				if appsHost && res != nil {
-					// Remove UI metadata without changing unrelated metadata or the recording.
-					copyResult := *res
-					copyResult.Meta = withoutUIMetadata(res.Meta)
-					copyResult.Content = withoutUIContentMetadata(res.Content)
-					res = &copyResult
-				}
 				return res, err
 			})
 		}
 	}
 
 	return s, nil
-}
-
-func withoutUIMetadata(meta mcp.Meta) mcp.Meta {
-	copyMeta := maps.Clone(meta)
-	for key := range copyMeta {
-		if key == "ui" || strings.HasPrefix(key, "ui/") {
-			delete(copyMeta, key)
-		}
-	}
-	return copyMeta
-}
-
-// Copy each block and every metadata map we filter. Payloads and annotations
-// remain shared because they are not modified.
-func withoutUIContentMetadata(content []mcp.Content) []mcp.Content {
-	if content == nil {
-		return nil
-	}
-	out := make([]mcp.Content, len(content))
-	for i, block := range content {
-		switch block := block.(type) {
-		case *mcp.TextContent:
-			copyBlock := *block
-			copyBlock.Meta = withoutUIMetadata(block.Meta)
-			out[i] = &copyBlock
-		case *mcp.ImageContent:
-			copyBlock := *block
-			copyBlock.Meta = withoutUIMetadata(block.Meta)
-			out[i] = &copyBlock
-		case *mcp.AudioContent:
-			copyBlock := *block
-			copyBlock.Meta = withoutUIMetadata(block.Meta)
-			out[i] = &copyBlock
-		case *mcp.ResourceLink:
-			copyBlock := *block
-			copyBlock.Meta = withoutUIMetadata(block.Meta)
-			out[i] = &copyBlock
-		case *mcp.EmbeddedResource:
-			copyBlock := *block
-			copyBlock.Meta = withoutUIMetadata(block.Meta)
-			if block.Resource != nil {
-				resource := *block.Resource
-				resource.Meta = withoutUIMetadata(resource.Meta)
-				copyBlock.Resource = &resource
-			}
-			out[i] = &copyBlock
-		case *mcp.ToolUseContent:
-			copyBlock := *block
-			copyBlock.Meta = withoutUIMetadata(block.Meta)
-			out[i] = &copyBlock
-		case *mcp.ToolResultContent:
-			copyBlock := *block
-			copyBlock.Meta = withoutUIMetadata(block.Meta)
-			copyBlock.Content = withoutUIContentMetadata(block.Content)
-			out[i] = &copyBlock
-		default:
-			out[i] = block
-		}
-	}
-	return out
 }
 
 // hopMetaKeys are the per-request _meta keys that describe the connection

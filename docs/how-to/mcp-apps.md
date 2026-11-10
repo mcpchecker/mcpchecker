@@ -29,12 +29,10 @@ config:
 `config.agent.apps.host` defaults to `false`. It controls how mcpchecker presents
 itself to the server and what it forwards to the agent. With `host: true`, mcpchecker
 provides a limited subset of Apps host behavior on behalf of the agent: it
-advertises the UI capability to upstream servers, hides app-only tools from the
-model, and removes `ui` and `ui/*` keys from tool result metadata sent to the agent.
-Filtering covers the result itself, content blocks, and embedded resource
-metadata, including nested tool-result content. Other metadata and payloads are
-preserved, and the recording retains the original tool result. This setting also works without Apps
-assertions and does not trigger resource reads by itself. It does not make the
+advertises the UI capability to upstream servers and hides app-only tools from the
+model. The proxy preserves tool result metadata and content for clients with or
+without Apps support. This setting also works without Apps assertions and does
+not trigger resource reads by itself. It does not make the
 client Apps-capable: mcpchecker does not start a browser, render the UI, or
 implement app-to-host messaging. Use it to exercise the server's behavior when
 UI support is declared, even if the agent client has no Apps support.
@@ -58,13 +56,26 @@ Reference that file with `config.agent.type: file` and `config.agent.path`.
 An explicit `config.agent.apps` overrides the file's Apps setting, including
 `host: false`; omitting it preserves the file's setting.
 
-For a client with native Apps support, leave host handling disabled so mcpchecker
-preserves UI result metadata and app-only tools for that client. This is not full
-Apps negotiation passthrough: the upstream connection is initialized by
-mcpchecker before the agent connects, and the agent's UI capability declaration
-is not forwarded. Servers that require that declaration may therefore withhold
-UI resources. Native-client rendering and app-to-host messaging are outside this
-resource validation feature.
+The proxy forwards the upstream server's `io.modelcontextprotocol/ui` extension
+declaration and preserves UI metadata with either host setting. Clients can read
+`ui://` resources through the proxy even when upstream omits them from
+`resources/list`. Client-requested UI reads are recorded as ordinary resource
+activity, separately from assertion-generated reads.
+
+The built-in LLM agent removes `ui` and `ui/*` metadata before sending tool
+results to the model, regardless of the host setting. This includes metadata on
+content blocks and embedded resources. Normal
+content, structured data, and unrelated metadata are preserved. This filtering
+happens inside the agent; proxy responses and recordings retain the UI metadata.
+
+For a client with native Apps support, leave host handling disabled if it needs
+access to app-only tools. This is not full Apps negotiation passthrough: the
+upstream connection is initialized by mcpchecker before the agent connects, and
+the agent's UI capability declaration is not forwarded. Servers that require
+that declaration may therefore withhold UI resources; set `host: true` to declare
+UI support upstream, with the app-only
+tool restriction described above. Native-client rendering and app-to-host
+messaging are outside this resource validation feature.
 
 Apps assertions work with either host setting. Adding an assertion does not
 change capability negotiation or the model's tool surface. With `host: false`,
@@ -93,8 +104,10 @@ spec:
 
 Use the server name from your MCP configuration and the exact tool name.
 The same assertion works for any UI shape, including pod details: change the
-tool name to the one that provides that UI. Assertions can also be configured
-under eval task sets and compose with task-level assertions.
+assertion's tool name, update the prompt to request that tool, and update the
+`alwaysAllow` entry in `mcp-config.yaml` to permit it. Changing only the assertion
+target can leave the tool uncalled or cause a presence failure. Assertions can
+also be configured under eval task sets and compose with task-level assertions.
 
 In this example, the agent decides to invoke `namespaces_list` and supplies its
 arguments. The recording proxy then reads the referenced UI resource and checks
@@ -145,8 +158,8 @@ are canceled and their observations are recorded before taking the final snapsho
 
 The tool runs once. After the call, the recording proxy reads the UI resource
 through its existing upstream MCP session; neither HTML nor the resource response
-is sent to the agent by validation. The agent's `apps.host` separately controls tool
-visibility and UI metadata filtering as described above.
+is sent to the agent by validation. The agent's `apps.host` separately controls
+upstream UI capability negotiation and tool visibility as described above.
 
 `assertionResults.apps` contains the assertion verdict and failure details. When
 all Apps targets are filtered out, this field is omitted; check
@@ -155,15 +168,17 @@ entry per matching invocation, with server, tool, generated invocation ID, and
 the resource URI and validated MIME type when available. It is omitted when
 there are no observations. Failures include a code and, for tool-call or read
 errors, a bounded diagnostic in `detail`: a single line of at most 512 characters,
-with HTML response bodies omitted. Assertion output includes the URI and
-diagnostic when available.
+with error text truncated at the first literal `<`. Response text before that
+character and encoded HTML may remain; complete response-body removal is not
+guaranteed. Assertion output includes the URI and diagnostic when available.
 
 Checker UI reads are recorded in resource history with `hostUiRead: true` and
 the observation's invocation ID in `appCallId`, even with the agent's
 `apps.host: false`.
-They retain the URI and any available MIME type, content byte size, and bounded
-read-error diagnostic; the HTML result is removed. The CLI counts these as
-`uiReads`. A successful resource read can still fail Apps validation, for example
+They retain the URI and any available MIME type, content byte size, and the
+bounded read-error diagnostic described above; the resource result is removed.
+The CLI counts these as `uiReads`. A successful resource read can still fail Apps
+validation, for example
 because its MIME type is wrong. These reads do not count toward agent resource
 assertions, call-order checks, or model token estimates. Ordinary resource
 recording is unchanged.
