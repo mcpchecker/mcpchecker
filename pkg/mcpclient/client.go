@@ -7,12 +7,14 @@ import (
 	"os/exec"
 	"slices"
 
+	"github.com/mcpchecker/mcpchecker/pkg/mcpapps"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 type Client struct {
 	*mcp.ClientSession
-	cfg *ServerConfig
+	cfg      *ServerConfig
+	appsHost bool
 }
 
 func Connect(ctx context.Context, cfg *ServerConfig) (*Client, error) {
@@ -37,10 +39,14 @@ func Connect(ctx context.Context, cfg *ServerConfig) (*Client, error) {
 	}
 
 	// TODO: revisit the client options, we probably want to leverage many
+	opts := &mcp.ClientOptions{}
+	if mcpapps.HostEnabled(ctx) {
+		opts.Capabilities = mcpapps.Capabilities()
+	}
 	client := mcp.NewClient(&mcp.Implementation{
 		Name:    "mcpchecker-client",
 		Version: "0.0.0",
-	}, nil)
+	}, opts)
 
 	cs, err := client.Connect(ctx, transport, nil)
 	if err != nil {
@@ -50,6 +56,7 @@ func Connect(ctx context.Context, cfg *ServerConfig) (*Client, error) {
 	return &Client{
 		ClientSession: cs,
 		cfg:           cfg,
+		appsHost:      mcpapps.HostEnabled(ctx),
 	}, nil
 }
 
@@ -60,6 +67,9 @@ func (c *Client) GetAllowedTools(ctx context.Context) ([]*mcp.Tool, error) {
 			return nil, err
 		}
 
+		if c.appsHost && !mcpapps.ModelVisible(t) {
+			continue
+		}
 		if c.cfg.EnableAllTools {
 			allowed = append(allowed, t)
 		} else if slices.Contains(c.cfg.AlwaysAllow, t.Name) {

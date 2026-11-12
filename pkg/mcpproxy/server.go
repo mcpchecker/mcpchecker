@@ -6,8 +6,10 @@ import (
 	"maps"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/mcpchecker/mcpchecker/pkg/mcpapps"
 	"github.com/mcpchecker/mcpchecker/pkg/mcpclient"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -55,7 +57,7 @@ var _ Server = &server{}
 func NewProxyServerForClient(ctx context.Context, name string, client *mcpclient.Client) (Server, error) {
 	r := NewRecorder(name)
 
-	s, err := createProxyServer(ctx, client.ClientSession, r)
+	s, err := createProxyServer(ctx, name, client.ClientSession, r)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create proxy server for %q: %w", name, err)
 	}
@@ -76,7 +78,7 @@ func NewProxyServerForClient(ctx context.Context, name string, client *mcpclient
 	}, nil
 }
 
-func createProxyServer(ctx context.Context, cs *mcp.ClientSession, r Recorder) (*mcp.Server, error) {
+func createProxyServer(ctx context.Context, name string, cs *mcp.ClientSession, r Recorder) (*mcp.Server, error) {
 	serverCaps := cs.InitializeResult().Capabilities
 	opts := &mcp.ServerOptions{
 		Instructions: cs.InitializeResult().Instructions,
@@ -86,10 +88,36 @@ func createProxyServer(ctx context.Context, cs *mcp.ClientSession, r Recorder) (
 			Tools:     serverCaps.Tools,
 		},
 	}
+	// Only forward extensions whose server-side behavior the proxy supports.
+	if ui, ok := serverCaps.Extensions["io.modelcontextprotocol/ui"]; ok {
+		opts.Capabilities.Extensions = map[string]any{"io.modelcontextprotocol/ui": ui}
+	}
 	s := mcp.NewServer(
 		cs.InitializeResult().ServerInfo,
 		opts,
 	)
+
+	appsHost := mcpapps.HostEnabled(ctx)
+	collector := mcpapps.FromContext(ctx)
+
+	// Apps resources may be absent from resources/list and resource templates.
+	// Forward their reads directly, leaving resource lookup to the upstream server.
+	s.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			if method == "resources/read" {
+				rrr := req.(*mcp.ReadResourceRequest)
+				if rrr.Params != nil && strings.HasPrefix(rrr.Params.URI, "ui://") {
+					start := time.Now()
+					params := *rrr.Params
+					params.Meta = upstreamMeta(params.Meta)
+					res, err := cs.ReadResource(ctx, &params)
+					r.RecordResourceRead(rrr, res, err, start)
+					return res, err
+				}
+			}
+			return next(ctx, method, req)
+		}
+	})
 
 	if opts.Capabilities.Prompts != nil {
 		for p, err := range cs.Prompts(ctx, &mcp.ListPromptsParams{}) {
@@ -142,7 +170,18 @@ func createProxyServer(ctx context.Context, cs *mcp.ClientSession, r Recorder) (
 			if err != nil {
 				return nil, fmt.Errorf("failed to list tools: %w", err)
 			}
+			if appsHost && !mcpapps.ModelVisible(t) {
+				continue
+			}
 			s.AddTool(t, func(ctx context.Context, ctr *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				if collector != nil {
+					callCtx, done, ok := collector.BeginCall(ctx, name, t.Name)
+					if !ok {
+						return nil, fmt.Errorf("apps validation has finished for this task")
+					}
+					ctx = callCtx
+					defer done()
+				}
 				start := time.Now()
 				res, err := cs.CallTool(ctx, &mcp.CallToolParams{
 					Meta:      upstreamMeta(ctr.Params.Meta),
@@ -150,6 +189,16 @@ func createProxyServer(ctx context.Context, cs *mcp.ClientSession, r Recorder) (
 					Arguments: ctr.Params.Arguments,
 				})
 				r.RecordToolCall(ctr, res, err, start)
+				if collector != nil {
+					collector.Observe(ctx, name, t, res, err, func(ctx context.Context, params *mcp.ReadResourceParams, appCallID string) (*mcp.ReadResourceResult, error) {
+						start := time.Now()
+						upstreamParams := *params
+						upstreamParams.Meta = upstreamMeta(params.Meta)
+						resource, readErr := cs.ReadResource(ctx, &upstreamParams)
+						r.RecordHostUIRead(appCallID, &mcp.ReadResourceRequest{Params: params}, resource, readErr, start)
+						return resource, readErr
+					})
+				}
 				return res, err
 			})
 		}
@@ -167,6 +216,7 @@ var hopMetaKeys = []string{
 	mcp.MetaKeyProtocolVersion,
 	mcp.MetaKeyClientInfo,
 	mcp.MetaKeyClientCapabilities,
+	"mcpchecker/host-ui-read", // Legacy marker: discard it, but never trust it for recording.
 }
 
 // upstreamMeta returns a copy of the agent's request _meta without the keys
@@ -227,7 +277,8 @@ func (s *server) Run(ctx context.Context) error {
 	close(s.ready)
 
 	httpServer := &http.Server{
-		Handler: mux,
+		Handler:     mux,
+		BaseContext: func(net.Listener) context.Context { return ctx },
 	}
 
 	// Run server in a goroutine

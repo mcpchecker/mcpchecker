@@ -1,0 +1,9 @@
+# Local kubernetes-mcp-server configuration for the namespace UI eval.
+port = "8080"
+bind_address = "127.0.0.1"
+apps_enabled = true
+read_only = true
+toolsets = ["core"]
+
+# Uses KUBECONFIG or ~/.kube/config by default. To pin a file:
+# kubeconfig = "/absolute/path/to/kubeconfig"

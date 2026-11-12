@@ -13,6 +13,7 @@ import (
 )
 
 const (
+	assertionTypeApps             = "apps"
 	assertionTypeToolsUsed        = "toolsUsed"
 	assertionTypeRequireAny       = "requireAny"
 	assertionTypeToolsNotUsed     = "toolsNotUsed"
@@ -62,6 +63,7 @@ func (s *SingleAssertionResult) Succeeded() bool {
 }
 
 type CompositeAssertionResult struct {
+	Apps              *SingleAssertionResult    `json:"apps,omitempty"`
 	ToolsUsed         *SingleAssertionResult    `json:"toolsUsed,omitempty"`
 	RequireAny        *SingleAssertionResult    `json:"requireAny,omitempty"`
 	ToolsNotUsed      *SingleAssertionResult    `json:"toolsNotUsed,omitempty"`
@@ -88,7 +90,7 @@ func (c *CompositeAssertionResult) allFields() []*SingleAssertionResult {
 		c.MinToolCalls, c.MaxToolCalls, c.ResourcesRead,
 		c.ResourcesNotRead, c.PromptsUsed, c.PromptsNotUsed,
 		c.CallOrder, c.NoDuplicateCalls,
-		c.SkillsLoaded, c.SkillsNotLoaded,
+		c.SkillsLoaded, c.SkillsNotLoaded, c.Apps,
 	}
 }
 
@@ -138,6 +140,7 @@ func (c *CompositeAssertionResult) FailedAssertions() int {
 
 func (c *CompositeAssertionResult) derivedCounts() AssertionCounts {
 	fields := map[string]*SingleAssertionResult{
+		assertionTypeApps:             c.Apps,
 		assertionTypeToolsUsed:        c.ToolsUsed,
 		assertionTypeRequireAny:       c.RequireAny,
 		assertionTypeToolsNotUsed:     c.ToolsNotUsed,
@@ -442,6 +445,9 @@ func (e *resourcesReadEvaluator) Evaluate(history *mcpproxy.CallHistory) *Single
 	for _, assertion := range e.assertions {
 		found := false
 		for _, call := range history.ResourceReads {
+			if call.HostUIRead {
+				continue
+			}
 			if matchesResourceAssertion(call, assertion) {
 				found = true
 				break
@@ -478,6 +484,9 @@ func NewResourcesNotReadEvaluator(assertions []ResourceAssertion) SingleAssertio
 func (e *resourcesNotReadEvaluator) Evaluate(history *mcpproxy.CallHistory) *SingleAssertionResult {
 	for _, assertion := range e.assertions {
 		for _, call := range history.ResourceReads {
+			if call.HostUIRead {
+				continue
+			}
 			if matchesResourceAssertion(call, assertion) {
 				return &SingleAssertionResult{
 					Passed: false,
@@ -594,6 +603,9 @@ func (e *callOrderEvaluator) Evaluate(history *mcpproxy.CallHistory) *SingleAsse
 	}
 
 	for _, rr := range history.ResourceReads {
+		if rr.HostUIRead {
+			continue
+		}
 		allCalls = append(allCalls, indexedCall{
 			timestamp: rr.Timestamp,
 			callType:  callTypeResource,
@@ -803,6 +815,7 @@ func (c *CompositeAssertionResult) Merge(other *CompositeAssertionResult) *Compo
 		Passed: c.PassedAssertions() + other.PassedAssertions(),
 	}
 	return &CompositeAssertionResult{
+		Apps:              mergeField(c.Apps, other.Apps),
 		ToolsUsed:         mergeField(c.ToolsUsed, other.ToolsUsed),
 		RequireAny:        mergeField(c.RequireAny, other.RequireAny),
 		ToolsNotUsed:      mergeField(c.ToolsNotUsed, other.ToolsNotUsed),

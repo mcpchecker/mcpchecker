@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/mcpchecker/mcpchecker/pkg/acpclient"
+	"github.com/mcpchecker/mcpchecker/pkg/mcpapps"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -131,6 +132,35 @@ func TestResolveLLMAgentResponsesAPI(t *testing.T) {
 	require.NotNil(t, spec.Builtin)
 	require.NotNil(t, spec.Builtin.UseResponsesAPI)
 	assert.False(t, *spec.Builtin.UseResponsesAPI)
+}
+
+func TestResolveAgentApps(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(`kind: Agent
+metadata:
+  name: apps-agent
+builtin:
+  type: llm-agent
+  model: openai:test
+apps:
+  host: true
+`), 0600))
+	for _, tc := range []struct {
+		name string
+		ref  AgentRef
+		want *mcpapps.Config
+	}{
+		{"builtin default", AgentRef{Type: "builtin.llm-agent", Model: "openai:test"}, nil},
+		{"builtin enabled", AgentRef{Type: "builtin.llm-agent", Model: "openai:test", Apps: &mcpapps.Config{Host: true}}, &mcpapps.Config{Host: true}},
+		{"file preserves enabled", AgentRef{Type: "file", Path: path}, &mcpapps.Config{Host: true}},
+		{"file explicit disable", AgentRef{Type: "file", Path: path, Apps: &mcpapps.Config{Host: false}}, &mcpapps.Config{Host: false}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			spec, err := ResolveAgentRef(&tc.ref)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, spec.Apps)
+		})
+	}
 }
 
 func TestResolveFileLLMAgentResponsesAPI(t *testing.T) {

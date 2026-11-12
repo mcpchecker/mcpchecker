@@ -204,6 +204,9 @@ func (e *Estimate) MergeCallHistory(history *mcpproxy.CallHistory) {
 		}
 	}
 	for _, rr := range history.ResourceReads {
+		if rr.HostUIRead {
+			continue
+		}
 		if rr.Tokens != nil {
 			e.ResourceInputTokens += rr.Tokens.InputTokens
 			e.ResourceOutputTokens += rr.Tokens.OutputTokens
@@ -261,7 +264,7 @@ func (e *Estimate) RecalculateAggregates(history *mcpproxy.CallHistory) {
 
 		for i := 0; i < turn.NumToolCalls && callIdx < len(toolCalls); i++ {
 			if toolCalls[callIdx].Tokens != nil {
-				turnOutput += toolCalls[callIdx].Tokens.InputTokens  // tool call params (LLM output)
+				turnOutput += toolCalls[callIdx].Tokens.InputTokens   // tool call params (LLM output)
 				turnResults += toolCalls[callIdx].Tokens.OutputTokens // tool results (context input)
 			}
 			callIdx++

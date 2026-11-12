@@ -512,10 +512,10 @@ func displayTextResults(results []*eval.EvalResult) error {
 func displayStatsByDifficulty(results []*eval.EvalResult, green *color.Color, yellow *color.Color) {
 	// Group results by difficulty
 	type difficultyStats struct {
-		totalTasks       int
-		tasksPassed      int
-		totalAssertions  int
-		passedAssertions int
+		totalTasks        int
+		tasksPassed       int
+		totalAssertions   int
+		passedAssertions  int
 		skippedAssertions int
 	}
 
@@ -640,6 +640,7 @@ func printFailedAssertions(w io.Writer, results *eval.CompositeAssertionResult) 
 	printSingleAssertion(w, "PromptsNotUsed", results.PromptsNotUsed)
 	printSingleAssertion(w, "CallOrder", results.CallOrder)
 	printSingleAssertion(w, "NoDuplicateCalls", results.NoDuplicateCalls)
+	printSingleAssertion(w, "Apps", results.Apps)
 
 	for _, failure := range results.PresenceFailures {
 		fmt.Fprintf(w, "    - Presence failure: %s\n", formatPresenceAssertion("", failure))
