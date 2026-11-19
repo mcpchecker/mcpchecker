@@ -202,7 +202,9 @@ func (r *evalRunner) RunWithProgress(ctx context.Context, taskPattern string, ca
 	// Individual tasks create their own proxy servers on top of these shared
 	// client connections for recording/isolation.
 	if mcpConfig != nil {
-		mcpManager, err := mcpclient.NewManager(ctx, mcpConfig)
+		// These upstream connections back the recording proxies. Let the agent,
+		// not the proxy's SDK client, fulfill input-required results.
+		mcpManager, err := mcpclient.NewManager(ctx, mcpConfig, mcpclient.WithInputRequiredPassthrough())
 		if err != nil {
 			return nil, fmt.Errorf("failed to connect to MCP servers: %w", err)
 		}

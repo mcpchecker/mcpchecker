@@ -23,7 +23,7 @@ type manager struct {
 	sessions map[string]*Client
 }
 
-func NewManager(ctx context.Context, config *MCPConfig) (Manager, error) {
+func NewManager(ctx context.Context, config *MCPConfig, options ...ConnectOption) (Manager, error) {
 	if config == nil {
 		return nil, fmt.Errorf("no config provided")
 	}
@@ -44,7 +44,7 @@ func NewManager(ctx context.Context, config *MCPConfig) (Manager, error) {
 
 	var err error
 	for name, cfg := range servers {
-		cs, connErr := Connect(ctx, cfg)
+		cs, connErr := Connect(ctx, cfg, options...)
 		if connErr != nil {
 			err = errors.Join(err, fmt.Errorf("failed to connect to mcp server %q: %w", name, connErr))
 			continue

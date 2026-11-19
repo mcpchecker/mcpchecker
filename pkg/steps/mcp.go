@@ -72,7 +72,7 @@ func (s *McpStep) Execute(ctx context.Context, input *StepInput) (*StepOutput, e
 		return nil, fmt.Errorf("no mcp server registered that matches name %q", s.serverName)
 	}
 
-	res, err := client.CallTool(ctx, &mcp.CallToolParams{
+	res, err := callScriptedTool(ctx, client, &mcp.CallToolParams{
 		Name:      s.toolName,
 		Arguments: s.Args,
 	})
@@ -89,6 +89,12 @@ func (s *McpStep) Execute(ctx context.Context, input *StepInput) (*StepOutput, e
 		if s.Expect != nil && s.Expect.IsError != nil && *s.Expect.IsError {
 			out.Success = true
 		}
+		return out, nil
+	}
+
+	if res.NeedsInput() {
+		out.Success = false
+		out.Error = "tool requires input, which scripted mcp steps cannot provide"
 		return out, nil
 	}
 
@@ -115,4 +121,19 @@ func (s *McpStep) Execute(ctx context.Context, input *StepInput) (*StepOutput, e
 	}
 
 	return out, nil
+}
+
+// callScriptedTool retries empty input requests (load shedding) on passthrough
+// connections. Match the SDK's limit of three load-shedding responses.
+func callScriptedTool(ctx context.Context, client *mcpclient.Client, params *mcp.CallToolParams) (*mcp.CallToolResult, error) {
+	const maxAttempts = 3
+	for range maxAttempts {
+		res, err := client.CallTool(ctx, params)
+		if err != nil || !res.NeedsInput() || len(res.InputRequests) > 0 {
+			return res, err
+		}
+		params.RequestState = res.RequestState
+		params.InputResponses = mcp.InputResponseMap{}
+	}
+	return nil, fmt.Errorf("multi-round-trip: exceeded maximum load-shedding retries (%d)", maxAttempts)
 }

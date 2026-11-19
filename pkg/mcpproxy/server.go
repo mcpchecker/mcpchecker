@@ -54,6 +54,9 @@ type server struct {
 
 var _ Server = &server{}
 
+// NewProxyServerForClient creates a recording proxy over an existing connection.
+// Connect the client with mcpclient.WithInputRequiredPassthrough so input-required
+// results can reach the agent rather than being fulfilled by the upstream SDK.
 func NewProxyServerForClient(ctx context.Context, name string, client *mcpclient.Client) (Server, error) {
 	r := NewRecorder(name)
 
@@ -184,9 +187,11 @@ func createProxyServer(ctx context.Context, name string, cs *mcp.ClientSession, 
 				}
 				start := time.Now()
 				res, err := cs.CallTool(ctx, &mcp.CallToolParams{
-					Meta:      upstreamMeta(ctr.Params.Meta),
-					Name:      ctr.Params.Name,
-					Arguments: ctr.Params.Arguments,
+					Meta:           upstreamMeta(ctr.Params.Meta),
+					Name:           ctr.Params.Name,
+					Arguments:      ctr.Params.Arguments,
+					InputResponses: ctr.Params.InputResponses,
+					RequestState:   ctr.Params.RequestState,
 				})
 				r.RecordToolCall(ctr, res, err, start)
 				if collector != nil {

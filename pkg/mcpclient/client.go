@@ -17,7 +17,19 @@ type Client struct {
 	appsHost bool
 }
 
-func Connect(ctx context.Context, cfg *ServerConfig) (*Client, error) {
+// ConnectOption configures an MCP client connection.
+type ConnectOption func(*mcp.ClientOptions)
+
+// WithInputRequiredPassthrough returns input-required tool, prompt, and resource
+// results to the caller instead of fulfilling them through SDK input handlers.
+// Use it for upstream connections whose results are forwarded to another client.
+func WithInputRequiredPassthrough() ConnectOption {
+	return func(opts *mcp.ClientOptions) {
+		opts.MultiRoundTrip = &mcp.MultiRoundTripOptions{Disabled: true}
+	}
+}
+
+func Connect(ctx context.Context, cfg *ServerConfig, options ...ConnectOption) (*Client, error) {
 	if err := cfg.Resolve(); err != nil {
 		return nil, err
 	}
@@ -42,6 +54,9 @@ func Connect(ctx context.Context, cfg *ServerConfig) (*Client, error) {
 	opts := &mcp.ClientOptions{}
 	if mcpapps.HostEnabled(ctx) {
 		opts.Capabilities = mcpapps.Capabilities()
+	}
+	for _, option := range options {
+		option(opts)
 	}
 	client := mcp.NewClient(&mcp.Implementation{
 		Name:    "mcpchecker-client",
