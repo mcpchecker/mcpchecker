@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"maps"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/mcpchecker/mcpchecker/pkg/mcpclient"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
@@ -121,7 +123,7 @@ func startProxy(t *testing.T, ctx context.Context) (Server, *upstreamMetas) {
 	client, err := mcpclient.Connect(ctx, &mcpclient.ServerConfig{
 		Type: mcpclient.TransportTypeHttp,
 		URL:  upstreamHTTP.URL,
-	})
+	}, mcpclient.WithInputRequiredPassthrough())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = client.Close() })
 
@@ -353,6 +355,104 @@ func TestProxyServerAcceptsNewProtocolRequests(t *testing.T) {
 	history := proxy.GetCallHistory()
 	require.Len(t, history.ToolCalls, 1)
 	assert.Equal(t, "echo", history.ToolCalls[0].ToolName)
+}
+
+func TestProxyServerInputRequiredRetry(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	const state = "opaque-continuation-state+/="
+	responses := mcp.InputResponseMap{
+		"confirm": &mcp.ElicitResult{Action: "accept", Content: map[string]any{"confirmation": "distinctive answer"}},
+	}
+	upstream := mcp.NewServer(&mcp.Implementation{Name: "upstream", Version: "1.0.0"}, nil)
+	upstream.AddTool(&mcp.Tool{Name: "confirm", InputSchema: map[string]any{"type": "object"}},
+		func(_ context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			if string(req.Params.Arguments) != `{"operation":"original request"}` {
+				return nil, fmt.Errorf("original arguments were not preserved: %s", req.Params.Arguments)
+			}
+			if req.Params.InputResponses == nil && req.Params.RequestState == "" {
+				return &mcp.CallToolResult{
+					InputRequests: mcp.InputRequestMap{
+						"confirm": &mcp.ElicitParams{
+							Message: "Confirm the operation",
+							RequestedSchema: &jsonschema.Schema{
+								Type:       "object",
+								Properties: map[string]*jsonschema.Schema{"confirmation": {Type: "string"}},
+							},
+						},
+					},
+					RequestState: state,
+				}, nil
+			}
+			answer, ok := req.Params.InputResponses["confirm"].(*mcp.ElicitResult)
+			if !ok || answer.Action != "accept" || answer.Content["confirmation"] != "distinctive answer" || req.Params.RequestState != state {
+				return nil, fmt.Errorf("retry did not preserve the input response and request state")
+			}
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "operation confirmed"}}}, nil
+		})
+	// The new protocol carries input requests in results instead of using
+	// legacy server-to-client elicitation requests.
+	upstreamHTTP := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server {
+		return upstream
+	}, &mcp.StreamableHTTPOptions{Stateless: true}))
+	t.Cleanup(upstreamHTTP.Close)
+
+	manager, err := mcpclient.NewManager(ctx, &mcpclient.MCPConfig{
+		MCPServers: map[string]*mcpclient.ServerConfig{
+			"upstream": {Type: mcpclient.TransportTypeHttp, URL: upstreamHTTP.URL},
+		},
+	}, mcpclient.WithInputRequiredPassthrough())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = manager.Close(ctx) })
+	proxies, err := NewServerManager(ctx, manager)
+	require.NoError(t, err)
+	require.NoError(t, proxies.Start(ctx))
+	t.Cleanup(func() { _ = proxies.Close() })
+	proxy := proxies.GetMcpServers()[0]
+	cfg, err := proxy.GetConfig()
+	require.NoError(t, err)
+
+	// The agent handles the two rounds explicitly; no human or elicitation
+	// handler is needed to exercise proxy passthrough.
+	agent := mcp.NewClient(&mcp.Implementation{Name: "agent", Version: "1.0.0"}, &mcp.ClientOptions{
+		MultiRoundTrip: &mcp.MultiRoundTripOptions{Disabled: true},
+	})
+	session, err := agent.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: cfg.URL},
+		&mcp.ClientSessionOptions{ProtocolVersion: newProtocolVersion})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = session.Close() })
+
+	params := &mcp.CallToolParams{Name: "confirm", Arguments: map[string]any{"operation": "original request"}}
+	first, err := session.CallTool(ctx, params)
+	require.NoError(t, err)
+	require.True(t, first.NeedsInput())
+	require.False(t, first.IsError)
+	require.Equal(t, state, first.RequestState)
+	require.Len(t, first.InputRequests, 1)
+	request, ok := first.InputRequests["confirm"].(*mcp.ElicitParams)
+	require.True(t, ok)
+	assert.Equal(t, "Confirm the operation", request.Message)
+
+	params.InputResponses = responses
+	params.RequestState = first.RequestState
+	final, err := session.CallTool(ctx, params)
+	require.NoError(t, err)
+	require.False(t, final.NeedsInput(), "retry must complete rather than restart the initial call")
+	require.False(t, final.IsError)
+	require.Len(t, final.Content, 1)
+	assert.Equal(t, &mcp.TextContent{Text: "operation confirmed"}, final.Content[0])
+
+	history := proxy.GetCallHistory()
+	require.Len(t, history.ToolCalls, 2)
+	assert.True(t, history.ToolCalls[0].Success)
+	assert.True(t, history.ToolCalls[0].Result.NeedsInput())
+	assert.Nil(t, history.ToolCalls[0].Request.Params.InputResponses)
+	assert.Empty(t, history.ToolCalls[0].Request.Params.RequestState)
+	assert.True(t, history.ToolCalls[1].Success)
+	assert.False(t, history.ToolCalls[1].Result.NeedsInput())
+	assert.Equal(t, responses, history.ToolCalls[1].Request.Params.InputResponses)
+	assert.Equal(t, state, history.ToolCalls[1].Request.Params.RequestState)
 }
 
 func TestUpstreamMeta(t *testing.T) {
