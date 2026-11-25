@@ -257,6 +257,7 @@ func (r *Runner) generateAgentSpecFile() (string, error) {
 
 func (r *Runner) runMcpChecker(ctx context.Context) *RunContext {
 	runCtx := &RunContext{
+		OutputFile:  r.outputFile,
 		MCPServers:  r.mcpServers,
 		JudgeServer: r.judgeServer,
 	}

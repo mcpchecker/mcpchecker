@@ -13,6 +13,7 @@ import (
 // RunContext contains runtime data needed for assertions.
 // It holds both the parsed eval results and captured mock server data.
 type RunContext struct {
+	OutputFile string
 	// Parsed eval results from the output JSON file
 	EvalResults []*eval.EvalResult
 

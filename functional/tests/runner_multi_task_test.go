@@ -3,10 +3,30 @@
 package tests
 
 import (
+	"encoding/json"
+	"os"
 	"testing"
 
 	"github.com/mcpchecker/mcpchecker/functional/testcase"
+	"github.com/mcpchecker/mcpchecker/pkg/eval"
+	"github.com/stretchr/testify/require"
 )
+
+type toolCoverageAssertion struct{}
+
+func (toolCoverageAssertion) Assert(t *testing.T, ctx *testcase.RunContext) {
+	t.Helper()
+	data, err := os.ReadFile(ctx.OutputFile)
+	require.NoError(t, err)
+	var output eval.EvalOutput
+	require.NoError(t, json.Unmarshal(data, &output))
+	require.Len(t, output.Results, 3)
+	require.Equal(t, []eval.ServerToolCoverage{{ServerName: "kubernetes", DiscoveryOK: true, Tools: []eval.ToolCoverage{
+		{Name: "kubectl_apply", Called: true, SuccessCount: 2},
+		{Name: "kubectl_get", Called: true, SuccessCount: 2},
+		{Name: "unused"},
+	}}}, output.ToolCoverage)
+}
 
 // TestMultipleTasksAllPass verifies that multiple tasks can be run
 // and all pass correctly. This is the baseline test for multi-task execution.
@@ -201,11 +221,14 @@ func TestToolCallsAcrossTasks(t *testing.T) {
 					WithStringParam("resource", "Resource type", true).
 					ReturnsText("NAME    READY   STATUS")
 			}).
-			Tool("kubectl_apply", func(tool *testcase.ToolDef) {
-				tool.WithDescription("Apply manifest").
-					WithStringParam("manifest", "YAML manifest", true).
-					ReturnsText("resource created")
-			})
+				Tool("kubectl_apply", func(tool *testcase.ToolDef) {
+					tool.WithDescription("Apply manifest").
+						WithStringParam("manifest", "YAML manifest", true).
+						ReturnsText("resource created")
+				}).
+				Tool("unused", func(tool *testcase.ToolDef) {
+					tool.ReturnsText("unused")
+				})
 		}).
 		WithAgent(func(a *testcase.AgentBuilder) {
 			// Task 1 uses kubectl_get
@@ -251,6 +274,7 @@ func TestToolCallsAcrossTasks(t *testing.T) {
 		ExpectToolCalledTimes("kubernetes", "kubectl_get", 2).
 		// kubectl_apply should be called twice (task 2 and task 3)
 		ExpectToolCalledTimes("kubernetes", "kubectl_apply", 2).
+		Expect(toolCoverageAssertion{}).
 		Run()
 }
 
