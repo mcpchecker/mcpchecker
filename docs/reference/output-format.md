@@ -4,14 +4,40 @@ mcpchecker saves evaluation results to `mcpchecker-<eval-name>-out.json`. This f
 
 ## Top-Level Structure
 
-The output file is a JSON object with two top-level fields:
+The output file is a JSON object with these top-level fields:
 
 ```json
 {
   "summary": { ... },
-  "results": [ ... ]
+  "results": [ ... ],
+  "toolCoverage": [ ... ]
 }
 ```
+
+### Tool coverage
+
+`toolCoverage` summarizes calls across all task runs against a snapshot of each
+enabled server's advertised tools taken before tasks run. The snapshot includes
+tools even when the configuration does not allow the agent to use them. The
+field is omitted when no MCP servers are configured.
+
+```json
+{
+  "serverName": "kubernetes",
+  "discoveryOk": true,
+  "tools": [
+    {"name": "get_pods", "called": true, "successCount": 2, "failureCount": 1},
+    {"name": "delete_pod", "called": false, "successCount": 0, "failureCount": 0}
+  ]
+}
+```
+
+Failed calls count as attempts, including MCP responses marked as errors. A
+failed discovery has `discoveryOk: false` and a `discoveryError`; a successful
+discovery with no tools has `discoveryOk: true` and an empty `tools` array.
+Coverage discovery has a 30-second timeout per server; a timeout is recorded as
+a discovery failure.
+Coverage does not measure individual tool parameters.
 
 ### Summary
 

@@ -291,6 +291,7 @@ func (r *evalRunner) RunWithProgress(ctx context.Context, taskPattern string, ca
 	if err != nil {
 		return nil, err
 	}
+	coverage := discoverToolCoverage(ctx, mcpConfig)
 
 	r.progressCallback(ProgressEvent{
 		Type:    EventEvalStart,
@@ -320,8 +321,9 @@ func (r *evalRunner) RunWithProgress(ctx context.Context, taskPattern string, ca
 	})
 
 	return &EvalOutput{
-		Summary: summary,
-		Results: results,
+		Summary:      summary,
+		Results:      results,
+		ToolCoverage: aggregateToolCoverage(coverage, results),
 	}, nil
 }
 

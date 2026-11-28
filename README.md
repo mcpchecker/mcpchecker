@@ -33,6 +33,54 @@ Results are saved to `mcpchecker-<name>-out.json` with a pass/fail summary print
 
 For hands-on tutorials, see [Quickstarts](https://github.com/mcpchecker/quickstarts).
 
+## Tool Coverage Output
+
+After all tasks finish, `check` compares recorded calls across all task runs with
+a snapshot of each enabled server's advertised tools. The saved JSON includes
+the following `toolCoverage` structure alongside `summary` and `results`:
+
+```json
+{
+  "toolCoverage": [
+    {
+      "serverName": "kubernetes",
+      "discoveryOk": true,
+      "tools": [
+        {"name": "nodes_top", "called": true, "successCount": 2, "failureCount": 1},
+        {"name": "api_resources_list", "called": false, "successCount": 0, "failureCount": 0}
+      ]
+    }
+  ]
+}
+```
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `toolCoverage` | array of server objects | Omitted when no MCP servers are configured. |
+| `serverName` | string | Server name from the MCP configuration. |
+| `discoveryOk` | boolean | Whether the server's tool list was successfully discovered. |
+| `discoveryError` | string, optional | Discovery failure details, including a timeout. Omitted on success. |
+| `tools` | array of tool objects | Advertised tools, including tools excluded by configuration and tools with no calls. Empty if discovery fails or the server has no tools; use `discoveryOk` to distinguish these cases. |
+| `tools[].name` | string | Tool name. |
+| `tools[].called` | boolean | Whether at least one recorded call attempted this tool, even if it failed. |
+| `tools[].successCount` | integer | Number of successful calls. |
+| `tools[].failureCount` | integer | Number of failed calls, including request errors and MCP responses marked `isError`. |
+
+In the example, `nodes_top` was attempted three times: two calls succeeded and
+one failed. Requesting metrics for a nonexistent node is one way a call can
+fail. Failed attempts still count toward tool coverage, so `called` is `true`
+even when every recorded call to a tool fails.
+
+A tool that was never called has `called: false`, `successCount: 0`, and
+`failureCount: 0`, as shown by `api_resources_list`. The failure count increases
+only when a recorded call fails; leaving a tool unused does not count as a
+failure. Adding `successCount` and `failureCount` gives the total number of
+recorded attempts for that tool across all tasks and repeated runs.
+
+Coverage discovery has a 30-second timeout per server. Coverage measures tool
+attempts; it does not track which parameters were used. See the
+[output format reference](docs/reference/output-format.md#tool-coverage) for details.
+
 ## How It Works
 
 mcpchecker places a recording proxy between the agent and your MCP server:

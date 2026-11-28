@@ -9,8 +9,9 @@ import (
 // EvalOutput wraps evaluation results with configuration summary metadata.
 // This is the top-level structure written to the JSON output file.
 type EvalOutput struct {
-	Summary *EvalSummary  `json:"summary"`
-	Results []*EvalResult `json:"results"`
+	Summary      *EvalSummary         `json:"summary"`
+	Results      []*EvalResult        `json:"results"`
+	ToolCoverage []ServerToolCoverage `json:"toolCoverage,omitempty"`
 }
 
 // EvalSummary captures the resolved configuration used for an evaluation run.
